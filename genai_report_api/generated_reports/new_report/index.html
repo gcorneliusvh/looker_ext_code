@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Annual Statement of Advisory Fees</title>
+    <style>
+        :root {
+            --ig-primary-blue: #003865; /* Dark blue for text elements like logo */
+            --ig-secondary-blue: #0073cf; /* Lighter blue, e.g. report title */
+            --table-header-bg: #4A90E2; /* Blue for table header background */
+            --text-color-dark: #333333;
+            --text-color-light: #ffffff;
+            --border-color-light: #dddddd;
+            --border-color-medium: #cccccc;
+            --background-color-page: #ffffff;
+            --font-family-sans-serif: Arial, Helvetica, sans-serif;
+            --font-size-base: 10pt;
+            --font-size-medium: 12pt;
+            --font-size-large: 16pt;
+            --font-size-xlarge: 20pt;
+            --font-size-small: 8pt;
+            --spacing-unit: 8px;
+            --report-max-width: 1100px;
+        }
+
+        body {
+            font-family: var(--font-family-sans-serif);
+            font-size: var(--font-size-base);
+            color: var(--text-color-dark);
+            background-color: var(--background-color-page);
+            margin: 0;
+            padding: 0;
+        }
+
+        .report-container {
+            max-width: var(--report-max-width);
+            margin: 0 auto;
+            padding: calc(var(--spacing-unit) * 2);
+        }
+
+        .top-accent-line {
+            height: 4px;
+            background-color: var(--ig-secondary-blue);
+            width: 100%;
+        }
+
+        .report-global-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            padding: var(--spacing-unit) 0;
+            margin-bottom: calc(var(--spacing-unit) * 2);
+            border-bottom: 1px solid var(--border-color-light);
+        }
+
+        .logo-container {
+            display: flex;
+            align-items: flex-start;
+        }
+
+        .logo-ig {
+            font-size: 28pt;
+            font-weight: bold;
+            color: var(--ig-primary-blue);
+            margin-right: calc(var(--spacing-unit) * 1.5);
+            line-height: 1;
+        }
+
+        .logo-details {
+            display: flex;
+            flex-direction: column;
+            font-size: var(--font-size-small);
+            font-weight: bold;
+            color: var(--ig-primary-blue);
+            line-height: 1.2;
+            padding-top: var(--spacing-unit); /* Align with base of "IG" */
+        }
+        
+        .logo-text-line {
+            display: block;
+        }
+
+
+        .client-summary {
+            font-size: var(--font-size-base);
+            text-align: right;
+            background-color: #e7f3fe; /* Light blue background similar to image */
+            padding: var(--spacing-unit);
+            border: 1px solid var(--border-color-medium);
+        }
+
+        .client-summary p {
+            margin: 0 0 calc(var(--spacing-unit) / 2) 0;
+        }
+        .client-summary p:last-child {
+            margin-bottom: 0;
+        }
+
+        .report-title-section {
+            text-align: left;
+            margin-bottom: calc(var(--spacing-unit) * 3);
+        }
+
+        .report-title-section h1 {
+            font-size: var(--font-size-xlarge);
+            color: var(--ig-secondary-blue);
+            margin: 0 0 calc(var(--spacing-unit) / 2) 0;
+            font-weight: normal;
+        }
+
+        .report-title-section #reportPeriodText {
+            font-size: var(--font-size-base);
+            color: var(--text-color-dark);
+            margin: 0;
+        }
+
+        .report-account-details h2 {
+            font-size: var(--font-size-medium);
+            font-weight: bold;
+            color: var(--text-color-dark);
+            margin-top: calc(var(--spacing-unit) * 2);
+            margin-bottom: var(--spacing-unit);
+            padding-bottom: calc(var(--spacing-unit) / 2);
+            border-bottom: 1px solid var(--border-color-medium);
+        }
+        
+        .table-and-note-container {
+            display: flex;
+            gap: calc(var(--spacing-unit) * 2);
+            align-items: flex-start; /* Align items to the top */
+        }
+
+        .accounts-table-wrapper {
+            flex-grow: 1; /* Table takes available space */
+        }
+
+        #accountTable {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+            font-size: var(--font-size-base);
+        }
+
+        #accountTable caption {
+            caption-side: bottom;
+            text-align: left;
+            font-size: var(--font-size-small);
+            color: var(--text-color-dark);
+            padding: var(--spacing-unit) 0;
+            display: none; /* Hidden as per visual, but good for accessibility */
+        }
+
+        #accountTable th,
+        #accountTable td {
+            border: none; /* No cell borders in image */
+            padding: var(--spacing-unit);
+            text-align: left;
+            vertical-align: top;
+        }
+
+        #accountTable thead th {
+            background-color: var(--table-header-bg);
+            color: var(--text-color-light);
+            font-weight: bold;
+            padding: calc(var(--spacing-unit)*1.5) var(--spacing-unit);
+        }
+        
+        #accountTable tbody tr:last-child td {
+             border-bottom: 1px solid var(--text-color-dark); /* Line above total */
+        }
+
+        #accountTable tfoot th,
+        #accountTable tfoot td {
+            font-weight: bold;
+            padding-top: var(--spacing-unit);
+        }
+        
+        #accountTable tfoot td {
+             border-top: 2px solid var(--text-color-dark); /* Double line above totals in cells */
+        }
+        #accountTable tfoot tr th { /* For the "Total..." label cell */
+            border-top: 2px solid var(--text-color-dark);
+        }
+
+
+        .text-right {
+            text-align: right !important;
+        }
+
+        .font-bold {
+            font-weight: bold !important;
+        }
+
+        .tax-note {
+            font-size: var(--font-size-small);
+            color: var(--text-color-dark);
+            padding: var(--spacing-unit);
+            border: 1px solid var(--border-color-light);
+            background-color: #f8f8f8;
+            max-width: 250px; /* Approximate width from image */
+            margin-top: calc(var(--spacing-unit) * 4.5); /* Align with table content, adjust as needed */
+        }
+        .tax-note p {
+            margin: 0;
+        }
+
+        /* Print Specific Styles */
+        @media print {
+            body {
+                font-size: 9pt; /* Slightly smaller for print */
+                color: #000000; /* Pure black for print */
+            }
+
+            .report-container {
+                max-width: none;
+                margin: 0;
+                padding: 0;
+            }
+            
+            .top-accent-line {
+                 background-color: #0073cf !important; /* Ensure color prints */
+            }
+
+            .report-global-header {
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                width: 100%;
+                background-color: var(--background-color-page);
+                padding: var(--spacing-unit);
+                border-bottom: 1px solid #888888;
+                z-index: 1000;
+            }
+            
+            .logo-ig, .logo-details {
+                color: #003865 !important;
+            }
+            
+            .client-summary {
+                background-color: #e7f3fe !important;
+                border: 1px solid #cccccc !important;
+            }
+            .report-title-section h1 {
+                color: #0073cf !important;
+            }
+
+            main {
+                padding-top: 100px; /* Adjust based on actual header height in print */
+                padding-bottom: 40px; /* Adjust based on actual footer height in print */
+            }
+            
+            .tax-note {
+                 border: 1px solid #cccccc !important;
+                 background-color: #f8f8f8 !important;
+                 /* break-inside: avoid-page; might be useful if it could get split */
+            }
+
+            #accountTable thead th {
+                background-color: var(--table-header-bg) !important; /* Ensure background prints */
+                color: var(--text-color-light) !important;
+                -webkit-print-color-adjust: exact; /* For Chrome/Safari */
+                print-color-adjust: exact; /* Standard */
+            }
+            
+            #accountTable tfoot td, #accountTable tfoot tr th {
+                 border-top-color: #000000 !important;
+            }
+
+
+            .report-global-footer {
+                position: fixed;
+                bottom: 0;
+                left: 0;
+                right: 0;
+                width: 100%;
+                font-size: var(--font-size-small);
+                text-align: right;
+                padding: calc(var(--spacing-unit) / 2) var(--spacing-unit);
+                background-color: var(--background-color-page);
+                border-top: 1px solid #888888;
+                z-index: 1000;
+            }
+
+            .hide-on-print {
+                display: none !important;
+            }
+
+            @page {
+                size: A4 portrait;
+                margin: 0.75in; /* Standard margins */
+            }
+            
+            /* This will add page numbers to the fixed footer if it's empty or desired there */
+            .report-global-footer::after {
+                 content: "Page " counter(page) " of " counter(pages);
+            }
+
+        }
+    </style>
+</head>
+<body>
+    <div class="top-accent-line"></div>
+    <div class="report-container">
+        <header class="report-global-header">
+            <div class="logo-container">
+                <span class="logo-ig">IG</span>
+                <div class="logo-details">
+                    <span class="logo-text-line">PRIVATE WEALTH</span>
+                    <span class="logo-text-line">MANAGEMENT</span>
+                </div>
+            </div>
+            <div class="client-summary">
+                <p>Client name: <span id="clientName"></span></p>
+                <p>Client number: <span id="clientNumberDisplay"></span></p>
+            </div>
+        </header>
+
+        <main>
+            <section class="report-title-section">
+                <h1>Annual statement of advisory fees</h1>
+                <p id="reportPeriodText"></p>
+            </section>
+
+            <section class="report-account-details">
+                <h2>Your individual non-registered accounts</h2>
+                <div class="table-and-note-container">
+                    <div class="accounts-table-wrapper">
+                        <table id="accountTable">
+                            <caption>Individual Non-Registered Account Fees</caption>
+                            <thead>
+                                <tr>
+                                    <th scope="col" style="width: 20%;">Client number</th>
+                                    <th scope="col" style="width: 40%;">Account(s)</th>
+                                    <th scope="col" style="width: 20%;" class="text-right">CAD</th>
+                                    <th scope="col" style="width: 20%;" class="text-right">USD</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <!-- Data rows will be inserted here by JavaScript -->
+                                 <tr>
+                                    <td colspan="4" style="text-align: center; padding: 20px;">Loading data...</td>
+                                 </tr>
+                            </tbody>
+                            <tfoot>
+                                <tr>
+                                    <th scope="row" colspan="2" class="text-left font-bold">Total individual account fees</th>
+                                    <td id="totalCAD" class="text-right font-bold"></td>
+                                    <td id="totalUSD" class="text-right font-bold"></td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                    <aside class="tax-note">
+                        <p>The advisory fee for non-registered accounts may be deductible in arriving at taxable income. Please consult your tax advisor for more information.</p>
+                    </aside>
+                </div>
+            </section>
+        </main>
+
+        <footer class="report-global-footer">
+            <!-- Page numbers are added via CSS @media print -->
+        </footer>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            const API_ENDPOINT = '/api/report_data?report=new_report';
+
+            const cadFormatter = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'CAD' });
+            const usdFormatter = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
+
+            async function fetchDataAndPopulateReport() {
+                try {
+                    const response = await fetch(API_ENDPOINT);
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    const data = await response.json();
+
+                    if (!data || data.length === 0) {
+                        displayError('No data received from API.');
+                        return;
+                    }
+                    
+                    populateReport(data);
+
+                } catch (error) {
+                    console.error('Error fetching or processing report data:', error);
+                    displayError(`Failed to load report data: ${error.message}`);
+                }
+            }
+
+            function populateReport(data) {
+                // Populate header client info (assuming first record has representative global info)
+                const firstRecord = data[0];
+                document.getElementById('clientName').textContent = firstRecord.ClientName || 'N/A';
+                document.getElementById('clientNumberDisplay').textContent = firstRecord.ClientNumberDisplay || 'N/A';
+
+                // Populate report period
+                if (firstRecord.ReportPeriod) {
+                    try {
+                        // Assuming ReportPeriod is a date string like "YYYY-MM-DD" or a timestamp
+                        const reportDate = new Date(firstRecord.ReportPeriod);
+                        const year = reportDate.getUTCFullYear(); // Use UTC to avoid timezone issues if date is just YYYY-MM-DD
+                        const endDateFormatted = reportDate.toLocaleDateString('en-US', { 
+                            month: 'long', 
+                            day: 'numeric', 
+                            year: 'numeric',
+                            timeZone: 'UTC' 
+                        });
+                        document.getElementById('reportPeriodText').textContent = `For the period January 1, ${year} through ${endDateFormatted}`;
+                    } catch (e) {
+                        console.error("Error formatting ReportPeriod: ", e);
+                        document.getElementById('reportPeriodText').textContent = `For period ending: ${firstRecord.ReportPeriod}`;
+                    }
+                } else {
+                    document.getElementById('reportPeriodText').textContent = 'Period not specified';
+                }
+
+                // Populate table
+                const tableBody = document.querySelector('#accountTable tbody');
+                tableBody.innerHTML = ''; // Clear loading message or previous data
+
+                let totalCAD = 0;
+                let totalUSD = 0;
+
+                if (data.length === 0 || !data[0].AccountClientNumber) { // Check if there's any actual account data
+                    const tr = document.createElement('tr');
+                    const td = document.createElement('td');
+                    td.colSpan = 4;
+                    td.textContent = 'No account data available for this period.';
+                    td.style.textAlign = 'center';
+                    tr.appendChild(td);
+                    tableBody.appendChild(tr);
+                } else {
+                    data.forEach(item => {
+                        const tr = document.createElement('tr');
+
+                        const cellClientNumber = document.createElement('td');
+                        cellClientNumber.textContent = item.AccountClientNumber;
+                        tr.appendChild(cellClientNumber);
+
+                        const cellAccountS = document.createElement('td');
+                        cellAccountS.textContent = item.AccountS;
+                        tr.appendChild(cellAccountS);
+
+                        const cellCAD = document.createElement('td');
+                        cellCAD.classList.add('text-right');
+                        cellCAD.textContent = cadFormatter.format(item.CAD || 0);
+                        tr.appendChild(cellCAD);
+                        totalCAD += (item.CAD || 0);
+
+                        const cellUSD = document.createElement('td');
+                        cellUSD.classList.add('text-right');
+                        cellUSD.textContent = usdFormatter.format(item.USD || 0);
+                        tr.appendChild(cellUSD);
+                        totalUSD += (item.USD || 0);
+
+                        tableBody.appendChild(tr);
+                    });
+                }
+
+                // Populate totals
+                document.getElementById('totalCAD').textContent = cadFormatter.format(totalCAD);
+                document.getElementById('totalUSD').textContent = usdFormatter.format(totalUSD);
+            }
+            
+            function displayError(message) {
+                const tableBody = document.querySelector('#accountTable tbody');
+                tableBody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: red; padding: 20px;">${message}</td></tr>`;
+                // Clear totals as well
+                document.getElementById('totalCAD').textContent = cadFormatter.format(0);
+                document.getElementById('totalUSD').textContent = usdFormatter.format(0);
+                // Clear header info if fetch completely failed
+                if (!document.getElementById('clientName').textContent) {
+                     document.getElementById('clientName').textContent = 'Error';
+                     document.getElementById('clientNumberDisplay').textContent = 'Error';
+                     document.getElementById('reportPeriodText').textContent = 'Error loading period';
+                }
+            }
+
+            fetchDataAndPopulateReport();
+        });
+    </script>
+</body>
+</html>

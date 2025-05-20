@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.env
+.vscode/
+.git/
+.gitignore
+*.md
+*.local
+genaimarketingdemo-2a875d02c7d2.json
+# Add any other files or directories you don't want in your Docker image
+# For example, if you have a local_service_account_key.json, add it here:
+# local_service_account_key.json

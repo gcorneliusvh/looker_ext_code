@@ -1,0 +1,78 @@
+""""Generate a single HTML file containing a full client-side report that visually mimics the provided image for an 'Annual statement of advisory fees'. The report should be fully styled with CSS (using variables and utility classes as per instructions) and include Javascript for dynamic data rendering.
+
+Data Source and Structure:
+
+The report data will be loaded from a JSON file named report_data.json located in the same directory as the index.html file.
+The structure of the JSON data will be an array of objects, with keys like:
+JSON
+
+[
+  {
+    "ClientName": "Test1",
+    "ClientNumberDisplay": 1,
+    "ReportPeriod": "2025-05-09",
+    "AccountClientNumber": 11234,
+    "AccountS": "Account 1",
+    "USD": 48165,
+    "CAD": 54908.1
+  },
+  {
+    "ClientName": "Test2",
+    "ClientNumberDisplay": 2,
+    "ReportPeriod": "2025-05-09",
+    "AccountClientNumber": 11235,
+    "AccountS": "Account 2",
+    "USD": 34519,
+    "CAD": 39351.66
+  }
+  // ... more data entries
+]
+Report Structure and Content Mapping:
+
+Overall Page Layout:
+
+Create a clean, professional, and fixed-width layout suitable for printing, adhering to the principles of semantic HTML5.
+Use a standard sans-serif font stack for all text.
+Report Header Section (<header>):
+
+On the top left, display the "IG Private Wealth Management" logo. Use a placeholder image URL (e.g., images/logo.png) or represent it with text if an image path cannot be assumed.
+Center-align the main report title: "Annual statement of advisory fees" using an <h1> tag.
+Beneath the main title, include the date range text: "For the period January 1, 2023 through December 31, 2023". (Note: This date range is static from the image; the ReportPeriod field in the JSON represents a single report date, not a range for this specific display).
+On the top right, create a section for "Client name :" and "Client number :".
+For "Client name :", dynamically display the ClientName from the first data object in the report_data.json array.
+For "Client number :", dynamically display the ClientNumberDisplay from the first data object in the report_data.json array. If ClientNumberDisplay indicates multiple or all clients (e.g., a specific string value or a flag), display "displaying all clients" as seen in the image, otherwise display the actual ClientNumberDisplay value. For the provided sample data, assume the numerical ClientNumberDisplay values will be shown directly.
+Main Report Content Area (<main>):
+
+Section Title: Include a prominent section heading "Your individual non-registered accounts" using a <h2> or <h3> tag.
+Data Table (<table>):
+Generate a data table with four columns: "Client number", "Account(s)", "CAD", and "USD".
+Map JSON fields to table columns: AccountClientNumber to "Client number", AccountS to "Account(s)", CAD to "CAD", and USD to "USD".
+The table header (<thead>) row must have a distinct background color (a prominent light blue, as shown in the image).
+Populate the table body (<tbody>) with data fetched from report_data.json.
+Ensure currency values in "CAD" and "USD" columns are formatted with a dollar sign and two decimal places (e.g., "$ 31.59").
+Include a table footer (<tfoot>) row for "Total individual account fees". This row should sum the "CAD" and "USD" values for all entries in the report_data.json and display them formatted as currency. This row should be visually distinct (e.g., bold text, slightly darker background, or a top border) to signify a summary.
+Ensure column alignments match the image: "Client number" and "Account(s)" should be left-aligned, while "CAD" and "USD" should be right-aligned.
+Disclaimer/Note Block: To the right of the main data table, create a separate text block containing the disclaimer: "The advisory fee for non-registered accounts may be deductible in arriving at taxable income. Please consult your tax advisor for more information." This block should have a light blue background and padding, similar to the table header's styling.
+CSS Styling and Formatting:
+
+CSS Variables: Define and utilize CSS variables (custom properties) in the :root pseudo-class for a consistent color palette (e.g., --primary-blue, --text-color, --background-light-grey), font sizes, spacing units, and border styles, matching the visual style of the image.
+Tables: Apply table-layout: fixed; and border-collapse: collapse; to the main data table for predictable layout. Use semantic <th> elements for table headers with appropriate scope attributes for accessibility. Style table borders, cell padding, and zebra-striping (if subtle in the image).
+Utility Classes: Employ utility classes for common formatting tasks such as text alignment (.text-left, .text-right, .text-center), margin/padding (e.g., .mb-spacing-unit), and font weights (.font-bold).
+Javascript Data Handling:
+
+Include Javascript to dynamically populate the main data table and header information.
+Data Source: The Javascript should use the Fetch API to load and parse the report_data.json file. Implement appropriate error handling for the fetch operation.
+Table Population: Write Javascript to iterate through the parsed JSON data and dynamically generate the <tr> and <td> elements within the <tbody> and <tfoot> of the HTML table. Perform the necessary calculations for the total row. Apply currency formatting before inserting values into the table cells.
+Header Population: Use Javascript to populate the "Client name" and "Client number" fields in the header from the JSON data.
+Print Functionality (@media print):
+
+Define print-specific CSS rules within an @media print block.
+Ensure the main report header (logo, title, date, client info) is fixed at the top of every printed page using position: fixed;.
+Add automatic page numbers to the bottom-right of every printed page using the @page rule and counter(page).
+Ensure content flows naturally across pages without awkward breaks.
+Mimicry and Code Quality:
+
+Strive for visual fidelity to the image example, specifically for the table layout, heading styles, the distinct blue accents, and text positioning.
+The generated code should be clean, well-structured, and commented for clarity.
+Prioritize a professional, report-like appearance consistent with SAP BusinessObjects output characteristics.
+Your answer should be ONLY CODE. No addtitional comments or explanations. Only CODE."""

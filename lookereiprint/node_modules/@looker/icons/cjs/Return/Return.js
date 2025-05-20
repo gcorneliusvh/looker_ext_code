@@ -1,0 +1,39 @@
+"use strict";
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.ReturnDimensions = exports.Return = void 0;
+
+var _react = _interopRequireDefault(require("react"));
+
+var _styledIcon = require("@styled-icons/styled-icon");
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+function _extends() { _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; }; return _extends.apply(this, arguments); }
+
+const Return = _react.default.forwardRef((props, ref) => {
+  const attrs = {
+    "fill": "currentColor",
+    "xmlns": "http://www.w3.org/2000/svg"
+  };
+  return _react.default.createElement(_styledIcon.StyledIconBase, _extends({
+    iconAttrs: attrs,
+    iconVerticalAlign: "middle",
+    iconViewBox: "0 0 24 24"
+  }, props, {
+    ref: ref
+  }), _react.default.createElement("path", {
+    d: "M4.62821 8.51923L7.07051 6.08974L5.98718 5L2.26923 8.70513C2.25641 8.71795 2.24103 8.73077 2.22436 8.74359C2.1859 8.78205 2.15385 8.82308 2.12821 8.86538L2 9.28846L2.12821 9.71154C2.15385 9.75385 2.1859 9.79487 2.22436 9.83333L5.98077 13.5897L7.07051 12.5L4.62821 10.0577H16.8077C17.8115 10.0577 18.6705 10.4141 19.3846 11.1282H19.391C20.1051 11.8423 20.4615 12.7026 20.4615 13.7115C20.4615 14.7205 20.1051 15.5808 19.391 16.2949H19.3846C18.6705 17.009 17.8115 17.3654 16.8077 17.3654H13.7949V18.9038H16.8077C18.2397 18.9038 19.4615 18.3974 20.4744 17.3846C21.491 16.3718 22 15.1474 22 13.7115C22 12.2756 21.491 11.0513 20.4744 10.0385C19.4615 9.02564 18.2397 8.51923 16.8077 8.51923H4.62821V8.51923Z"
+  }));
+});
+
+exports.Return = Return;
+Return.displayName = 'Return';
+const ReturnDimensions = {
+  height: 24,
+  width: 24
+};
+exports.ReturnDimensions = ReturnDimensions;
+//# sourceMappingURL=Return.js.map

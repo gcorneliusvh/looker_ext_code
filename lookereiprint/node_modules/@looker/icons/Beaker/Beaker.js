@@ -1,0 +1,27 @@
+import "core-js/modules/es.object.assign.js";
+
+function _extends() { _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; }; return _extends.apply(this, arguments); }
+
+import React from 'react';
+import { StyledIconBase } from '@styled-icons/styled-icon';
+export var Beaker = React.forwardRef(function (props, ref) {
+  var attrs = {
+    "fill": "currentColor",
+    "xmlns": "http://www.w3.org/2000/svg"
+  };
+  return React.createElement(StyledIconBase, _extends({
+    iconAttrs: attrs,
+    iconVerticalAlign: "middle",
+    iconViewBox: "0 0 24 24"
+  }, props, {
+    ref: ref
+  }), React.createElement("path", {
+    d: "M15.75 4.50171C16.4417 4.50171 17 3.94254 17 3.25171C17 2.56171 16.4417 2.00171 15.75 2.00171C15.0583 2.00171 14.5 2.56171 14.5 3.25171C14.5 3.94254 15.0583 4.50171 15.75 4.50171ZM12 5.75254C12.69 5.75254 13.25 5.19254 13.25 4.50088C13.25 3.81088 12.6917 3.25088 12 3.25088C11.3083 3.25088 10.75 3.81088 10.75 4.50088C10.75 5.19171 11.31 5.75254 12 5.75254ZM19.2208 20.7625C17.9658 18.3475 15.75 13.2509 15.75 13.2509V8.25088H16.375C16.7192 8.25088 17 7.97088 17 7.62588C17 7.28171 16.7192 7.00088 16.375 7.00088H8.875C8.53 7.00088 8.25 7.28171 8.25 7.62588C8.25 7.97088 8.53 8.25088 8.875 8.25088H9.5V13.2509C9.5 13.2509 7.3325 18.5267 6.10667 20.8842C5.52667 22.0017 5.52667 22.0017 6.91 22.0017C9.9275 22.0017 15.8092 22.0017 18.6575 22.0017C19.2167 22.0017 19.8667 22.0017 19.2217 20.7617L19.2208 20.7625ZM10.75 13.2517V8.25171H14.5V13.2517C14.5 13.2517 14.72 13.7675 15.035 14.5017H10.2425C10.5425 13.7692 10.75 13.2517 10.75 13.2517ZM16.9225 20.7517C14.55 20.7517 11.1067 20.7517 8.59167 20.7517C7.43917 20.7517 7.43917 20.7517 7.9225 19.795C8.435 18.78 9.145 17.1375 9.725 15.7517H15.58C16.1692 17.09 16.8792 18.6692 17.3942 19.6875C17.93 20.7509 17.3892 20.7509 16.9225 20.7509V20.7517Z"
+  }));
+});
+Beaker.displayName = 'Beaker';
+export var BeakerDimensions = {
+  height: 24,
+  width: 24
+};
+//# sourceMappingURL=Beaker.js.map

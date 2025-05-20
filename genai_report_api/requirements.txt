@@ -1,0 +1,13 @@
+python-multipart
+google-cloud-storage
+requests
+fastapi
+uvicorn
+httpx
+google-genai >= 0.7.0 # Or your working version
+google-generativeai >= 0.5.0 # Or your working version
+google-cloud-bigquery
+python-dotenv # If you are using .env file for GCP_PROJECT_ID etc.
+functions-framework==3.*
+google-cloud-storage
+google-cloud-aiplatform

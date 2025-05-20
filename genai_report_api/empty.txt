@@ -1,0 +1,92 @@
+export GCP_PROJECT_ID="genaimarketingdemo"
+export GCP_LOCATION="us-central1" # Or your Vertex AI region
+export GOOGLE_APPLICATION_CREDENTIALS="/home/corneliusvh/genai_report_api/genaimarketingdemo-2a875d02c7d2.json"
+export GCS_BUCKET_NAME="report_html_templates_genaimarketingdemo"
+
+sudo docker run --rm -p 8000:8080 \
+  -e GCP_PROJECT_ID="${GCP_PROJECT_ID}" \
+  -e GCP_LOCATION="${GCP_LOCATION}" \
+  -e GOOGLE_APPLICATION_CREDENTIALS="/app/credentials/service_account_key.json" \
+  -v "${GOOGLE_APPLICATION_CREDENTIALS}:/app/credentials/service_account_key.json:ro" \
+  genai-report-api-local
+
+
+  curl -X POST "http://localhost:8000/generate_report" \
+  -H "accept: text/html" \
+  -F "image_url=https://storage.googleapis.com/report_screenshots_genaimarketingdemo" \
+  -F "prompt=Generate a report based on the image from the URL." \
+  -o local_generated_report_py311.html
+
+  sudo docker run --rm -p 8000:8080 \
+  -e GCP_PROJECT_ID="${GCP_PROJECT_ID}" \
+  -e GCP_LOCATION="${GCP_LOCATION}" \
+  -e GOOGLE_APPLICATION_CREDENTIALS="/app/credentials/service_account_key.json" \
+  -v "${GOOGLE_APPLICATION_CREDENTIALS}:/app/credentials/service_account_key.json:ro" \
+  genai-report-api-local
+
+  # Step 1: Set the variable (ensure this is done in the SAME terminal session as curl)
+IMAGE_URL="https://storage.googleapis.com/report_screenshots_genaimarketingdemo/image.jpg"
+
+# Step 2: Run the curl command
+curl -X POST "http://localhost:8000/generate_report" \
+  -H "accept: text/html" \
+  -F "image_url="https://storage.googleapis.com/report_screenshots_genaimarketingdemo/image.jpg" \
+  -F "prompt=Generate a report based on the image from the URL." \
+  -o "generated_report_from_url.html"
+
+
+  curl -X POST "http://localhost:8000/generate_report"   -H "accept: text/html"   -F "image_url=https://storage.googleapis.com/report_screenshots_genaimarketingdemo/image.jpg"   -F "prompt=Generate a report based on the image from the URL."   -F "system_instruction=You are a helpful web developer. Return only HTML code."   -o test_generated_report.html
+
+  curl -X POST http://localhost:8000/reports \
+  -F "report_name=gcs_report" \
+  -F "image_url=https://storage.googleapis.com/report_screenshots_genaimarketingdemo/image.jpg" \
+  -F "sql_query=SELECT * FROM genaimarketingdemo.report_printing.account_list" \
+  -F "prompt=Generate a report based on the image from the image. Only RETURN CODE. No Explanation, no description. ONLY CODE." \
+  -L -o gcs_page.html
+
+curl "http://localhost:8000/api/report_data?report=new_report&ReportPeriod_gte=2025-05-01&ReportPeriod_lte=2025-05-31"
+
+sudo docker run --rm -p 8000:8080 -v /home/corneliusvh/genai_report_api:/app \
+  -e GCP_PROJECT_ID="${GCP_PROJECT_ID}" \
+  -e GCP_LOCATION="${GCP_LOCATION}" \
+  -e GCS_BUCKET_NAME="report_html_templates_genaimarketingdemo" \
+  -e GOOGLE_APPLICATION_CREDENTIALS="/app/credentials/service_account_key.json" \
+  -v "${GOOGLE_APPLICATION_CREDENTIALS}:/app/credentials/service_account_key.json:ro" \
+  genai-report-api-local:latest
+
+  # 1. Define your filter criteria as a JSON string (mimicking what Looker would send)
+FILTER_CRITERIA_JSON='{
+    "user_attributes": {
+        "AccountClientNumber": 11234
+    },
+    "dynamic_filters": {
+        "ReportPeriod_gte": "2025-05-01",
+        "ReportPeriod_lte": "2025-05-31",
+        "SomeOtherClientFilter_eq": "some_value" 
+    }
+}'
+
+# 2. Define your base SQL query (ensure it's structured for easy AND condition appending, e.g., ends with WHERE 1=1)
+BASE_SQL_QUERY='SELECT * FROM genaimarketingdemo.report_printing.account_list WHERE 1=1'
+prompt: Generate the report represented in the image. Make sure columns are properly aligned. Add narrow margins on the sides. Make sure the header has enough space and that the content of the report does not overlap with the data in the report when printed
+# 3. Run the curl command
+# (Define your FILTER_CRITERIA_JSON and BASE_SQL_QUERY as before)
+
+curl -X POST http://localhost:8000/reports \
+  -F "report_name=bq_test_report" \
+  -F "image_url=https://storage.googleapis.com/report_screenshots_genaimarketingdemo/image.jpg" \
+  -F "sql_query=${BASE_SQL_QUERY}" \
+  -F "prompt=Mimic the report in the image." \
+  -F "filter_criteria_json=${FILTER_CRITERIA_JSON}" \
+  -F "optimized_prompt=This is an optimized version of the prompt." \ # Optional
+  -F "header_text=My Report Header" \ # Optional
+  -F "footer_text=My Report Footer - Page %p" \ # Optional
+  -L -o redirected_page.html
+
+FILTER_CRITERIA_JSON='{
+    "dynamic_filters": {
+        "ReportPeriod_gte": "2025-05-01",
+        "ReportPeriod_lte": "2025-05-31",
+        "SomeOtherClientFilter_eq": "some_value" 
+    }
+}'

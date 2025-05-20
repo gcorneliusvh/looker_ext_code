@@ -1,0 +1,520 @@
+
+**Key Features Implemented:**
+
+1.  **HTML Structure:** Semantic HTML5 elements are used for structure, including `<header>`, `<main>`, `<section>`, `<table>`, `<thead>`, `<tbody>`, `<tfoot>`, and `<caption>`.
+2.  **CSS Styling:**
+    *   CSS variables (`:root`) for theming (colors, fonts, spacing).
+    *   Styles to match the visual appearance of the logo, titles, client information block, table, and advisory note from the image.
+    *   Utility classes like `.text-right` and `.text-bold`.
+3.  **JavaScript for Data:**
+    *   Fetches data from `/api/report_data?report=my_first_curl_report` using the Fetch API.
+    *   Populates the client name from the first data record (`ClientName`). The client number in the header is fixed to "displaying all clients" as per the image.
+    *   Dynamically creates table rows for `AccountClientNumber`, `AccountS`, `CAD`, and `USD`.
+    *   Calculates and displays totals for `CAD` and `USD`.
+    *   Includes error handling for data fetching and processing.
+    *   Formats currency values to two decimal places and includes a `$` symbol.
+4.  **Print-Ready Design:**
+    *   Uses `@media print` for print-specific styles.
+    *   Implements repeatable page headers (report logo, client info) and footers (page numbers) on each printed page using `position: fixed;`.
+    *   Page numbers are automatically generated using CSS counters (`counter(page)`).
+    *   Ensures that background colors and critical visual elements are printable.
+    *   The report period "For the period January 1, 2023 through December 31, 2023" is hardcoded as per the image. The `ReportPeriod` field from the schema is not directly used for this string, as its format and intended use for a date *range* are unspecified.
+
+**Assumptions:**
+
+*   The API endpoint `/api/report_data?report=my_first_curl_report` is accessible from where the HTML file is served. For local `file:///` testing, this might require a local web server or browser adjustments for API calls.
+*   The `ClientName` field in the data is appropriate for display in the report header.
+*   The `AccountClientNumber` field corresponds to the "Client number" column in the table.
+*   The schema fields `USD` (Integer) and `CAD` (Float) represent numerical values that can be formatted as currency.
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Annual Statement of Advisory Fees</title>
+    <style>
+        :root {
+            --primary-font: Arial, Helvetica, sans-serif;
+            --heading-font: Arial, Helvetica, sans-serif;
+
+            --color-logo-ig: #0033A0; 
+            --color-logo-text: #000000;
+            --color-report-title: #3A77B7;
+            --color-report-subtitle: #555555;
+            --color-section-header: #000000;
+            --color-table-header-bg: #3A77B7;
+            --color-table-header-text: #FFFFFF;
+            --color-table-border: #B0B0B0;
+            --color-text-primary: #333333;
+            --color-text-secondary: #555555;
+            --color-client-info-bg: #F0F8FF; 
+            --color-client-info-border: #D0D8E0;
+            --color-accent-line: #6CACDE;
+
+            --font-size-base: 10pt;
+            --font-size-small: 8.5pt;
+            --font-size-large: 14pt;
+            --font-size-xl: 18pt;
+            --font-size-logo-ig: 32pt;
+            --font-size-logo-text: 9pt;
+
+            --spacing-unit: 4px;
+            --spacing-small: calc(var(--spacing-unit) * 2);  /* 8px */
+            --spacing-medium: calc(var(--spacing-unit) * 3); /* 12px */
+            --spacing-large: calc(var(--spacing-unit) * 5);  /* 20px */
+            --spacing-xl: calc(var(--spacing-unit) * 8);   /* 32px */
+
+            --report-max-width: 1100px;
+            
+            /* Estimated heights for fixed print header/footer */
+            --print-header-height: 70px;
+            --print-footer-height: 30px;
+        }
+
+        body {
+            font-family: var(--primary-font);
+            font-size: var(--font-size-base);
+            color: var(--color-text-primary);
+            background-color: #FFFFFF;
+            margin: 0;
+            padding: 0;
+            border-top: 4px solid var(--color-accent-line);
+        }
+
+        .report-container {
+            max-width: var(--report-max-width);
+            margin: 0 auto;
+            padding: var(--spacing-large);
+        }
+
+        .report-global-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            padding-bottom: var(--spacing-medium);
+            margin-bottom: var(--spacing-large);
+            border-bottom: 2px solid var(--color-accent-line);
+        }
+
+        .logo-area {
+            display: flex;
+            align-items: center;
+        }
+
+        .logo-ig {
+            font-size: var(--font-size-logo-ig);
+            font-weight: 700;
+            color: var(--color-logo-ig);
+            margin-right: var(--spacing-small);
+            line-height: 1;
+        }
+
+        .logo-text-details {
+            display: flex;
+            flex-direction: column;
+            color: var(--color-logo-text);
+            font-weight: 600;
+        }
+
+        .logo-maintext,
+        .logo-subtext-detail {
+            font-size: var(--font-size-logo-text);
+            line-height: 1.2;
+            letter-spacing: 0.5px;
+        }
+
+        .client-info-box {
+            background-color: var(--color-client-info-bg);
+            border: 1px solid var(--color-client-info-border);
+            padding: var(--spacing-medium);
+            font-size: var(--font-size-small);
+            min-width: 220px;
+        }
+
+        .client-info-box p {
+            margin: var(--spacing-small) 0;
+            color: var(--color-text-secondary);
+        }
+        .client-info-box strong {
+            color: var(--color-text-primary);
+            font-weight: 600;
+        }
+
+        .report-introduction h1 {
+            font-family: var(--heading-font);
+            font-size: var(--font-size-xl);
+            color: var(--color-report-title);
+            font-weight: 600;
+            margin-top: 0;
+            margin-bottom: var(--spacing-unit);
+        }
+
+        .report-introduction .report-period {
+            font-size: var(--font-size-base);
+            color: var(--color-report-subtitle);
+            margin-top: 0;
+            margin-bottom: var(--spacing-xl);
+        }
+
+        .report-content h2 {
+            font-family: var(--heading-font);
+            font-size: var(--font-size-large);
+            color: var(--color-section-header);
+            font-weight: 600;
+            margin-top: 0;
+            margin-bottom: var(--spacing-medium);
+        }
+
+        .content-wrapper {
+            display: flex;
+            gap: var(--spacing-large);
+            align-items: flex-start;
+        }
+
+        .table-main-content {
+            flex: 3;
+        }
+
+        #advisory-fees-table {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+            font-size: var(--font-size-base);
+        }
+
+        #advisory-fees-table caption {
+            caption-side: bottom;
+            text-align: left;
+            font-size: var(--font-size-small);
+            color: var(--color-text-secondary);
+            padding-top: var(--spacing-medium);
+            /* Hidden by default as per typical BoBJ, but good for accessibility */
+            /* display: none; */ 
+        }
+
+        #advisory-fees-table th,
+        #advisory-fees-table td {
+            padding: var(--spacing-small) var(--spacing-medium);
+            border-bottom: 1px solid var(--color-table-border);
+            text-align: left;
+            vertical-align: top;
+        }
+        
+        #advisory-fees-table th:first-child,
+        #advisory-fees-table td:first-child {
+            padding-left: 0;
+        }
+        #advisory-fees-table th:last-child,
+        #advisory-fees-table td:last-child {
+            padding-right: 0;
+        }
+
+        #advisory-fees-table thead th {
+            background-color: var(--color-table-header-bg);
+            color: var(--color-table-header-text);
+            font-weight: 600;
+            border-bottom: none; /* Blue bar itself forms the visual separator */
+        }
+        
+        #advisory-fees-table thead tr {
+             border-top: 2px solid var(--color-table-header-bg); /* Top part of the blue bar */
+             border-bottom: 2px solid var(--color-table-header-bg); /* Bottom part of the blue bar */
+        }
+
+        #advisory-fees-table tfoot td {
+            font-weight: bold;
+            border-top: 2px solid var(--color-table-border); 
+            border-bottom: none; 
+        }
+
+        .text-right { text-align: right !important; }
+        .text-bold { font-weight: bold !important; }
+        .currency-symbol { padding-right: var(--spacing-unit); }
+
+        .advisory-note {
+            flex: 1;
+            font-size: var(--font-size-small);
+            color: var(--color-text-secondary);
+            padding-top: calc(2px + var(--spacing-small)); /* Align with first row of table data (thead border + th padding) */
+            line-height: 1.4;
+        }
+        .advisory-note p { margin: 0; }
+
+        .report-global-footer { display: none; /* Screen footer not shown, print footer handled by @media print */ }
+        
+        .error-message {
+            color: red; text-align: center; padding: var(--spacing-large); font-weight: bold;
+        }
+
+        /* Print specific styles */
+        @media print {
+            :root { /* Optional: Adjust base font sizes for print */
+                --font-size-base: 9pt; --font-size-small: 7.5pt; --font-size-large: 12pt;
+                --font-size-xl: 15pt; --font-size-logo-ig: 28pt; --font-size-logo-text: 8pt;
+            }
+
+            @page {
+                size: letter portrait;
+                margin: 0.75in; /* Standard margin for the main content area */
+            }
+
+            body {
+                border-top: none; /* Remove screen top border for print */
+                margin: 0; 
+                padding-top: var(--print-header-height); 
+                padding-bottom: var(--print-footer-height);
+                -webkit-print-color-adjust: exact; color-adjust: exact;
+            }
+
+            .report-container {
+                max-width: none; margin: 0; padding: 0; 
+            }
+            
+            .report-global-header { /* This becomes the fixed print header */
+                position: fixed;
+                top: 0; /* Position relative to paper edge */
+                left: 0.75in; /* Align with @page margin */
+                right: 0.75in; /* Align with @page margin */
+                width: auto; /* Auto width based on left/right */
+                height: var(--print-header-height); /* Fixed height */
+                background-color: #FFFFFF; /* Cover content scrolling underneath */
+                border-bottom: 2px solid var(--color-accent-line);
+                z-index: 1000;
+                box-sizing: border-box; 
+                /* Contents of .report-global-header are used as is */
+                margin-bottom: 0; /* Override screen margin */
+                padding-bottom: var(--spacing-small); /* Adjust internal padding if needed */
+            }
+
+            .report-global-footer { /* This becomes the fixed print footer */
+                display: block !important; /* Make it visible for print */
+                position: fixed;
+                bottom: 0; /* Position relative to paper edge */
+                left: 0.75in;
+                right: 0.75in;
+                width: auto;
+                height: var(--print-footer-height); /* Fixed height */
+                background-color: #FFFFFF;
+                z-index: 1000;
+                box-sizing: border-box;
+                text-align: right; /* For page number */
+                border-top: 1px solid var(--color-table-border);
+                padding-top: var(--spacing-small); /* Internal padding */
+            }
+            .report-global-footer .page-number-placeholder::before {
+                content: "Page " counter(page) " of " counter(pages);
+                font-size: var(--font-size-small);
+                color: var(--color-text-secondary);
+            }
+
+            /* Ensure backgrounds and colors print correctly */
+            .client-info-box { background-color: var(--color-client-info-bg) !important; }
+            #advisory-fees-table thead th {
+                 background-color: var(--color-table-header-bg) !important;
+                 color: var(--color-table-header-text) !important;
+            }
+
+            /* Control page breaks */
+            table, tr, td, th, tbody, thead, tfoot { page-break-inside: avoid !important; }
+            .content-wrapper { page-break-inside: avoid; }
+            h1, h2, h3, h4, h5, h6 { page-break-after: avoid; }
+            p { page-break-inside: avoid; }
+        }
+    </style>
+</head>
+<body>
+    <div class="report-container">
+        <header class="report-global-header">
+            <div class="logo-area">
+                <span class="logo-ig">IG</span>
+                <div class="logo-text-details">
+                    <span class="logo-maintext">PRIVATE WEALTH</span>
+                    <span class="logo-subtext-detail">MANAGEMENT</span>
+                </div>
+            </div>
+            <div class="client-info-box">
+                <p>Client name: <strong id="client-name-display">[Loading...]</strong></p>
+                <p>Client number: <strong id="client-number-display">displaying all clients</strong></p>
+            </div>
+        </header>
+
+        <main id="main-report-content">
+            <section class="report-introduction">
+                <h1>Annual statement of advisory fees</h1>
+                <p class="report-period">For the period January 1, 2023 through December 31, 2023</p>
+            </section>
+
+            <section class="report-content">
+                <h2>Your individual non-registered accounts</h2>
+                <div class="content-wrapper">
+                    <div class="table-main-content">
+                        <table id="advisory-fees-table">
+                            <caption id="table-caption">Details of advisory fees for non-registered accounts. This table lists individual accounts, their associated client numbers, and advisory fees in CAD and USD.</caption>
+                            <thead>
+                                <tr>
+                                    <th scope="col">Client number</th>
+                                    <th scope="col">Account(s)</th>
+                                    <th scope="col" class="text-right">CAD</th>
+                                    <th scope="col" class="text-right">USD</th>
+                                </tr>
+                            </thead>
+                            <tbody id="report-table-body">
+                                <tr><td colspan="4" style="text-align:center; padding: 20px;">Loading data...</td></tr>
+                            </tbody>
+                            <tfoot>
+                                <tr>
+                                    <td colspan="2" class="text-bold">Total individual account fees</td>
+                                    <td class="text-right text-bold" id="total-cad"><span class="currency-symbol">$</span>0.00</td>
+                                    <td class="text-right text-bold" id="total-usd"><span class="currency-symbol">$</span>0.00</td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                    <aside class="advisory-note">
+                        <p>The advisory fee for non-registered accounts may be deductible in arriving at taxable income. Please consult your tax advisor for more information.</p>
+                    </aside>
+                </div>
+            </section>
+        </main>
+
+        <footer class="report-global-footer">
+            <span class="page-number-placeholder"></span>
+        </footer>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            fetchReportData();
+        });
+
+        async function fetchReportData() {
+            const apiUrl = '/api/report_data?report=my_first_curl_report';
+            // Note: For this client-side fetch to work when opening the HTML file locally (file:///),
+            // you might need to use a local web server. If the API is on a different domain,
+            // CORS (Cross-Origin Resource Sharing) policies must allow the request.
+
+            try {
+                const response = await fetch(apiUrl);
+                if (!response.ok) {
+                    throw new Error(`HTTP error ${response.status}: ${response.statusText}`);
+                }
+                const data = await response.json();
+
+                if (!data || (Array.isArray(data) && data.length === 0 && !Object.keys(data).length) ) {
+                     // Handle empty array or empty object as "no data"
+                    displayError('No data received from the API. Report cannot be generated.');
+                    updateTableCaption("No advisory fee data available.");
+                    // Ensure table body is cleared and shows no data message
+                    const tableBody = document.getElementById('report-table-body');
+                    if(tableBody) {
+                        tableBody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding: 20px;">No account data available.</td></tr>';
+                    }
+                    // Reset totals
+                    document.getElementById('total-cad').innerHTML = '<span class="currency-symbol">$</span>0.00';
+                    document.getElementById('total-usd').innerHTML = '<span class="currency-symbol">$</span>0.00';
+                    return;
+                }
+                
+                // Data Schema: ClientName (STRING), ClientNumberDisplay (INTEGER), ReportPeriod (DATE), 
+                // AccountClientNumber (INTEGER), AccountS (STRING), USD (INTEGER), CAD (FLOAT)
+                // Note: ClientNumberDisplay and ReportPeriod from schema are not explicitly used in this template's current dynamic fields.
+
+                populateClientInfo(data); // data can be an array or an object with array property
+                populateTable(Array.isArray(data) ? data : (data.items || [])); // Adapt if data is wrapped in an object e.g. { "items": [] }
+
+            } catch (error) {
+                console.error('Error fetching or processing report data:', error);
+                displayError(`Failed to load report data: ${error.message}. Check console for details.`);
+                updateTableCaption("Error loading advisory fee data.");
+            }
+        }
+
+        function populateClientInfo(responseData) {
+            const clientNameEl = document.getElementById('client-name-display');
+            let nameToDisplay = 'N/A';
+
+            // Check if responseData is an array and has items
+            if (Array.isArray(responseData) && responseData.length > 0 && responseData[0].ClientName) {
+                nameToDisplay = responseData[0].ClientName;
+            } 
+            // Optionally, check if responseData is an object with a specific structure
+            // else if (typeof responseData === 'object' && responseData !== null && responseData.client && responseData.client.ClientName) {
+            //     nameToDisplay = responseData.client.ClientName; 
+            // }
+
+            clientNameEl.textContent = nameToDisplay;
+        }
+        
+        function formatCurrencyValue(value) {
+            if (value === null || typeof value === 'undefined' || isNaN(parseFloat(value))) {
+                return '0.00';
+            }
+            return Number(value).toFixed(2);
+        }
+
+        function populateTable(dataArray) {
+            const tableBody = document.getElementById('report-table-body');
+            tableBody.innerHTML = ''; // Clear loading message
+
+            if (!Array.isArray(dataArray) || dataArray.length === 0) {
+                const row = tableBody.insertRow();
+                const cell = row.insertCell();
+                cell.colSpan = 4;
+                cell.textContent = 'No account data available for display.';
+                cell.style.textAlign = 'center';
+                cell.style.padding = '20px';
+                document.getElementById('total-cad').innerHTML = '<span class="currency-symbol">$</span>0.00';
+                document.getElementById('total-usd').innerHTML = '<span class="currency-symbol">$</span>0.00';
+                updateTableCaption("No advisory fee data available for display.");
+                return;
+            }
+
+            let totalCAD = 0;
+            let totalUSD = 0;
+
+            dataArray.forEach(item => {
+                const row = tableBody.insertRow();
+                
+                row.insertCell().textContent = item.AccountClientNumber !== null && typeof item.AccountClientNumber !== 'undefined' ? item.AccountClientNumber : 'N/A';
+                row.insertCell().textContent = item.AccountS || 'N/A';
+                
+                const cadCell = row.insertCell();
+                cadCell.classList.add('text-right');
+                cadCell.innerHTML = `<span class="currency-symbol">$</span>${formatCurrencyValue(item.CAD)}`;
+                
+                const usdCell = row.insertCell();
+                usdCell.classList.add('text-right');
+                usdCell.innerHTML = `<span class="currency-symbol">$</span>${formatCurrencyValue(item.USD)}`;
+
+                totalCAD += parseFloat(item.CAD) || 0;
+                totalUSD += parseFloat(item.USD) || 0;
+            });
+
+            document.getElementById('total-cad').innerHTML = `<span class="currency-symbol">$</span>${formatCurrencyValue(totalCAD)}`;
+            document.getElementById('total-usd').innerHTML = `<span class="currency-symbol">$</span>${formatCurrencyValue(totalUSD)}`;
+            updateTableCaption(`Details of ${dataArray.length} advisory fee account(s).`);
+        }
+        
+        function updateTableCaption(message) {
+            const captionEl = document.getElementById('table-caption');
+            if (captionEl) {
+                captionEl.textContent = message;
+            }
+        }
+
+        function displayError(message) {
+            const mainContent = document.getElementById('main-report-content');
+            if (mainContent) {
+                 mainContent.innerHTML = `<p class="error-message">${message}</p>`;
+            } else { // Fallback if main content area isn't found
+                document.body.insertAdjacentHTML('beforeend', `<p class="error-message">${message}</p>`);
+            }
+            const clientNameEl = document.getElementById('client-name-display');
+            if (clientNameEl) clientNameEl.textContent = 'Error';
+        }
+
+    </script>
+</body>
+</html>

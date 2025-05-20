@@ -1,0 +1,63 @@
+{
+  "name": "@looker/components-providers",
+  "license": "MIT",
+  "version": "1.5.34",
+  "main": "dist/cjs/index.js",
+  "module": "dist/esm/index.js",
+  "types": "lib/index.d.ts",
+  "src": "src/index.ts",
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "repository": {
+    "url": "looker-open-source/components",
+    "directory": "packages/components-providers"
+  },
+  "files": [
+    "src",
+    "lib",
+    "dist"
+  ],
+  "scripts": {
+    "test": "jest",
+    "prepublishOnly": "lk prepublishOnly"
+  },
+  "dependencies": {
+    "@looker/design-tokens": "^3.1.1",
+    "@looker/i18n": "1.0.0",
+    "i18next": "20.3.1",
+    "react-helmet-async": "^1.0.9",
+    "react-i18next": "11.8.15",
+    "tabbable": "^5.2.0"
+  },
+  "devDependencies": {
+    "@looker/babel-preset-styled-components": "*",
+    "@looker/babel-preset-typescript": "*",
+    "@looker/components-scripts": "*",
+    "@looker/eslint-config-oss": "*",
+    "@looker/jest-config": "*",
+    "@looker/prettier-config": "*",
+    "@testing-library/react": "12.1.5",
+    "lodash": "^4.17.20",
+    "prettier": "2.8.2",
+    "react": "16.14.0",
+    "styled-components": "5.3.1"
+  },
+  "peerDependencies": {
+    "lodash": "^4.17.20",
+    "react": "16.14.0 - 18",
+    "styled-components": "^5.3.1"
+  },
+  "eslintConfig": {
+    "root": true,
+    "extends": [
+      "@looker/eslint-config-oss"
+    ],
+    "rules": {
+      "i18next/no-literal-string": "off"
+    }
+  },
+  "gitHead": "62febc162e3e45124f403e2c84fc741f68fe6714"
+}
