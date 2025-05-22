@@ -30,7 +30,7 @@ function ViewAllReports({ onSelectReportForFiltering }) {
   const { extensionSDK } = extensionContext;
 
   // !!! IMPORTANT: Use your current and correct ngrok URL base !!!
-  const NGROK_BASE_URL = 'https://885d-2001-569-5925-3000-216-3eff-fe9a-a055.ngrok-free.app';
+  const NGROK_BASE_URL = 'https://c530-207-216-175-143.ngrok-free.app';
 
 
   useEffect(() => {

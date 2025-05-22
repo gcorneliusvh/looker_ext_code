@@ -56,7 +56,7 @@ function EditSystemInstructions() {
   // ---------------------------------------------------------------------------
   // CRITICAL: Ensure this is your ACTUAL NGROK or other backend URL
   // ---------------------------------------------------------------------------
-  const [backendUrl, setBackendUrl] = useState('https://885d-2001-569-5925-3000-216-3eff-fe9a-a055.ngrok-free.app'); 
+  const [backendUrl, setBackendUrl] = useState('https://c530-207-216-175-143.ngrok-free.app'); 
   // ---------------------------------------------------------------------------
 
   const isBackendUrlPlaceholder = backendUrl === 'YOUR_NGROK_OR_FASTAPI_BACKEND_URL';
