@@ -56,7 +56,7 @@ function EditSystemInstructions() {
   // ---------------------------------------------------------------------------
   // CRITICAL: Ensure this is your ACTUAL NGROK or other backend URL
   // ---------------------------------------------------------------------------
-  const [backendUrl, setBackendUrl] = useState('https://c530-207-216-175-143.ngrok-free.app'); 
+  const [backendUrl, setBackendUrl] = useState('https://looker-ext-code-17837811141.us-central1.run.app'); 
   // ---------------------------------------------------------------------------
 
   const isBackendUrlPlaceholder = backendUrl === 'YOUR_NGROK_OR_FASTAPI_BACKEND_URL';

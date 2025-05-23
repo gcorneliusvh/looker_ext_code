@@ -142,7 +142,7 @@ function ReportForm() {
   const { extensionSDK } = useContext(ExtensionContext);
   const [sdkReady, setSdkReady] = useState(false);
 
-  const backendBaseUrl = 'https://c530-207-216-175-143.ngrok-free.app';
+  const backendBaseUrl = 'https://looker-ext-code-17837811141.us-central1.run.app';
 
   useEffect(() => {
     // ... (useEffect for SDK readiness, client attribute, manifest constants - same as before) ...

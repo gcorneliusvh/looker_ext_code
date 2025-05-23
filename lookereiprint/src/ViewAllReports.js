@@ -30,7 +30,7 @@ function ViewAllReports({ onSelectReportForFiltering }) {
   const { extensionSDK } = extensionContext;
 
   // !!! IMPORTANT: Use your current and correct ngrok URL base !!!
-  const NGROK_BASE_URL = 'https://c530-207-216-175-143.ngrok-free.app';
+  const NGROK_BASE_URL = 'https://looker-ext-code-17837811141.us-central1.run.app';
 
 
   useEffect(() => {
