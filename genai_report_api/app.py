@@ -22,7 +22,7 @@ from google.api_core.exceptions import NotFound as GCSNotFound
 from google.api_core import exceptions as google_api_exceptions
 
 import vertexai
-from vertexai.generative_models import GenerativeModel, Part, Image
+from vertexai.generative_models import GenerativeModel, Part, Image # Ensure Image is imported
 from vertexai.generative_models import HarmCategory, HarmBlockThreshold, GenerationConfig
 
 # --- AppConfig & Global Configs ---
@@ -156,6 +156,15 @@ class FinalizeTemplatePayload(BaseModel):
     report_name: str
     mappings: List[PlaceholderUserMapping]
 
+# New Pydantic models for one-shot refinement
+class RefinementPayload(BaseModel):
+    refinement_prompt_text: str
+
+class RefinementResponse(BaseModel):
+    report_name: str
+    refined_html_content: str
+    new_template_gcs_path: str
+    message: str
 
 @asynccontextmanager
 async def lifespan(app_fastapi: FastAPI):
@@ -197,9 +206,12 @@ app = FastAPI(lifespan=lifespan)
 
 NGROK_URL_FROM_ENV = os.getenv("FRONTEND_NGROK_URL", "https://c530-207-216-175-143.ngrok-free.app")
 LOOKER_INSTANCE_URL_FROM_ENV = os.getenv("LOOKER_INSTANCE_URL", "https://igmprinting.cloud.looker.com")
-LOOKER_EXTENSION_SANDBOX_HOST = "https://83d14716-08b3-4def-bdca-54f4b2af9f19-extensions.cloud.looker.com"
+LOOKER_EXTENSION_SANDBOX_HOST = "https://83d14716-08b3-4def-bdca-54f4b2af9f19-extensions.cloud.looker.com" # Replace if yours is different
 allowed_origins_list = ["http://localhost:8080", LOOKER_INSTANCE_URL_FROM_ENV, LOOKER_EXTENSION_SANDBOX_HOST]
 if NGROK_URL_FROM_ENV: allowed_origins_list.append(NGROK_URL_FROM_ENV)
+# Add your Cloud Run service URL to this list after deployment if frontend calls it directly
+# For example: CLOUD_RUN_SERVICE_URL = os.getenv("CLOUD_RUN_SERVICE_URL")
+# if CLOUD_RUN_SERVICE_URL: allowed_origins_list.append(CLOUD_RUN_SERVICE_URL)
 allowed_origins_list = sorted(list(set(o for o in allowed_origins_list if o and o.startswith("http"))))
 if not allowed_origins_list: allowed_origins_list = ["http://localhost:8080"]
 print(f"INFO: CORS allow_origins effectively configured for: {allowed_origins_list}")
@@ -212,12 +224,15 @@ def _load_system_instruction_from_gcs(client: storage.Client, bucket_name: str, 
         if blob.exists(): print(f"INFO: Loaded system instruction from gs://{bucket_name}/{blob_name}"); return blob.download_as_text(encoding='utf-8')
         print(f"WARN: System instruction file not found at gs://{bucket_name}/{blob_name}. Using fallback."); return DEFAULT_FALLBACK_SYSTEM_INSTRUCTION
     except Exception as e: print(f"ERROR: Failed to load system instruction from GCS: {e}. Using fallback."); return DEFAULT_FALLBACK_SYSTEM_INSTRUCTION
+
 def get_bigquery_client_dep():
     if not config.bigquery_client: raise HTTPException(status_code=503, detail="BigQuery client not available.")
     return config.bigquery_client
+
 def get_storage_client_dep():
     if not config.storage_client: raise HTTPException(status_code=503, detail="GCS client not available.")
     return config.storage_client
+
 def get_vertex_ai_initialized_flag():
     if not config.vertex_ai_initialized: raise HTTPException(status_code=503, detail="Vertex AI SDK not initialized.")
     if not config.TARGET_GEMINI_MODEL: raise HTTPException(status_code=503, detail="TARGET_GEMINI_MODEL not configured.")
@@ -388,13 +403,12 @@ async def discover_template_placeholders(
         try: calculation_rows_configs_for_discovery = [CalculationRowConfig(**item) for item in json.loads(calc_row_configs_json_str)]
         except (json.JSONDecodeError, TypeError) as e: print(f"WARN: Could not parse CalculationRowConfigsJSON for '{report_name}' in discover: {e}")
 
-    # REVERTED Regex to only find double curly braces
     discovered_placeholders_list: List[DiscoveredPlaceholderInfo] = []
-    placeholder_keys_found = set(re.findall(r"\{\{([^{}]+?)\}\}", html_content, re.DOTALL)) # Using [^{}]+? for key
+    placeholder_keys_found = set(re.findall(r"\{\{([^{}]+?)\}\}", html_content, re.DOTALL))
 
     for key_in_tag_raw in placeholder_keys_found:
         key_in_tag_content = key_in_tag_raw.strip()
-        original_full_tag = f"{{{{{key_in_tag_content}}}}}" # Reconstruct the double-braced tag
+        original_full_tag = f"{{{{{key_in_tag_content}}}}}" 
 
         if not key_in_tag_content:
             continue
@@ -431,7 +445,6 @@ async def discover_template_placeholders(
                 suggestion=suggestion
             )
         )
-    # END REVERTED Regex and logic
 
     unique_placeholders_dict = {p.original_tag: p for p in discovered_placeholders_list}
     final_placeholders = list(unique_placeholders_dict.values())
@@ -476,7 +489,7 @@ async def finalize_template_with_mappings(
 
     modified_html_content = current_html_content
     for mapping in payload.mappings:
-        original_tag_escaped = re.escape(mapping.original_tag) # This will correctly escape {{Key}}
+        original_tag_escaped = re.escape(mapping.original_tag)
         if mapping.map_type == "ignore":
             modified_html_content = re.sub(original_tag_escaped, "", modified_html_content)
         elif mapping.map_type == "static_text" and mapping.static_text_value is not None:
@@ -512,7 +525,6 @@ async def finalize_template_with_mappings(
         print(f"ERROR: Failed to save placeholder mappings to BigQuery for '{report_name}': {str(e)}")
 
     return {"message": f"Template for report '{report_name}' finalized and mappings saved."}
-
 
 @app.post("/report_definitions", status_code=201)
 async def upsert_report_definition(
@@ -668,7 +680,6 @@ async def upsert_report_definition(
         print(f"ERROR: {error_message}"); raise HTTPException(status_code=500, detail=error_message)
     return {"message": f"Report definition '{report_name}' upserted.", "template_html_gcs_path": f"gs://{config.GCS_BUCKET_NAME}/{template_gcs_path_str}"}
 
-
 @app.get("/report_definitions", response_model=List[ReportDefinitionListItem])
 async def list_report_definitions_endpoint(bq_client: bigquery.Client = Depends(get_bigquery_client_dep)):
     query = f"SELECT ReportName, Prompt, SQL, ScreenshotURL, TemplateURL, BaseQuerySchemaJSON, FieldDisplayConfigsJSON, CalculationRowConfigsJSON, SubtotalConfigsJSON, UserPlaceholderMappingsJSON, UserAttributeMappingsJSON, LastGeneratedTimestamp FROM `{config.gcp_project_id}.report_printing.report_list` ORDER BY ReportName ASC"
@@ -683,6 +694,112 @@ async def list_report_definitions_endpoint(bq_client: bigquery.Client = Depends(
             except Exception as pydantic_error: print(f"ERROR: Pydantic validation for report {row_dict_item.get('ReportName')}: {pydantic_error}. Data: {row_dict_item}"); continue
         return processed_results
     except Exception as e: print(f"ERROR fetching report definitions: {e}"); raise HTTPException(status_code=500, detail=f"Failed to fetch report definitions: {str(e)}")
+
+@app.post("/report_definitions/{report_name}/refine_template", response_model=RefinementResponse)
+async def refine_report_template_oneshot(
+    report_name: str,
+    payload: RefinementPayload,
+    bq_client: bigquery.Client = Depends(get_bigquery_client_dep),
+    gcs_client: storage.Client = Depends(get_storage_client_dep),
+    _vertex_ai_init_check: None = Depends(get_vertex_ai_initialized_flag)
+):
+    print(f"INFO: Refining template for report '{report_name}'.")
+
+    query_def_sql = f"""
+        SELECT TemplateURL, ScreenshotURL 
+        FROM `{config.gcp_project_id}.report_printing.report_list` WHERE ReportName = @report_name_param
+    """
+    def_params = [ScalarQueryParameter("report_name_param", "STRING", report_name)]
+    try:
+        results = list(bq_client.query(query_def_sql, job_config=bigquery.QueryJobConfig(query_parameters=def_params)).result())
+        if not results:
+            raise HTTPException(status_code=404, detail=f"Report definition '{report_name}' not found.")
+        report_def = results[0]
+        current_template_gcs_path = report_def.get("TemplateURL")
+        image_url_for_context = report_def.get("ScreenshotURL")
+
+        if not current_template_gcs_path or not current_template_gcs_path.startswith("gs://"):
+            raise HTTPException(status_code=404, detail=f"Valid TemplateURL not found for '{report_name}'.")
+        if not image_url_for_context:
+            raise HTTPException(status_code=400, detail=f"ImageURL (ScreenshotURL) not found for '{report_name}', needed for refinement context.")
+    except Exception as e:
+        print(f"ERROR fetching report definition for refinement: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error fetching report definition details for refinement: {str(e)}")
+
+    try:
+        path_parts = current_template_gcs_path.replace("gs://", "").split("/", 1)
+        bucket_name, blob_name = path_parts[0], path_parts[1]
+        bucket = gcs_client.bucket(bucket_name)
+        template_blob = bucket.blob(blob_name)
+        if not template_blob.exists():
+            raise HTTPException(status_code=404, detail=f"Template file not found at {current_template_gcs_path}.")
+        current_html_content = template_blob.download_as_text(encoding='utf-8')
+    except Exception as e:
+        print(f"ERROR loading current template from GCS: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error loading current template from GCS: {str(e)}")
+
+    refinement_prompt_for_gemini = f"""
+You are an expert HTML and CSS developer. You will be provided with an existing HTML document and a set of instructions to refine it.
+Your task is to apply the refinement instructions to the existing HTML and output the COMPLETE, new, valid HTML document.
+Ensure all original placeholder syntax (double curly braces like {{{{PlaceholderKey}}}}) is preserved unless the instructions specifically ask to change them.
+The visual style should still be guided by the provided style-guide image.
+
+EXISTING HTML DOCUMENT:
+---
+{current_html_content}
+---
+
+USER'S REFINEMENT INSTRUCTIONS:
+---
+{payload.refinement_prompt_text}
+---
+
+Based on the refinement instructions, and keeping the style-guide image in mind, please provide the full, updated HTML code.
+Remember: Output ONLY the raw HTML code. No descriptions, no explanations, no markdown. Start with `<!DOCTYPE html>` or `<html>` and end with `</html>`.
+ALL placeholders for dynamic data MUST use double curly braces, e.g., {{{{YourPlaceholderKey}}}}. Single braces (e.g., {{YourPlaceholderKey}}) are NOT PERMITTED and will not be processed.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=180.0) as client_httpx:
+            img_response = await client_httpx.get(image_url_for_context); img_response.raise_for_status()
+            image_bytes_data = await img_response.aread()
+            image_mime_type_data = img_response.headers.get("Content-Type", "application/octet-stream").lower()
+            if not image_mime_type_data.startswith("image/"): raise ValueError("Content-Type from URL is not valid for image.")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error fetching style-guide image URL '{image_url_for_context}' for refinement: {str(e)}")
+
+    refined_html_output = generate_html_from_user_pattern(
+        prompt_text=refinement_prompt_for_gemini,
+        image_bytes=image_bytes_data,
+        image_mime_type=image_mime_type_data,
+        system_instruction_text=config.default_system_instruction_text
+    )
+
+    if not refined_html_output or not refined_html_output.strip():
+        raise HTTPException(status_code=500, detail="AI failed to generate refined HTML content.")
+
+    try:
+        template_blob.upload_from_string(refined_html_output, content_type='text/html; charset=utf-8')
+        print(f"INFO: Successfully saved refined template for '{report_name}' to {current_template_gcs_path}.")
+    except Exception as e:
+        print(f"ERROR: GCS Upload Failed for refined template: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to save refined template to GCS: {str(e)}")
+
+    table_id = f"`{config.gcp_project_id}.report_printing.report_list`"
+    update_sql = f"UPDATE {table_id} SET LastGeneratedTimestamp = CURRENT_TIMESTAMP() WHERE ReportName = @report_name"
+    update_params = [ScalarQueryParameter("report_name", "STRING", report_name)]
+    try:
+        job = bq_client.query(update_sql, job_config=bigquery.QueryJobConfig(query_parameters=update_params))
+        job.result()
+        print(f"INFO: Updated LastGeneratedTimestamp for report '{report_name}'.")
+    except Exception as e:
+        print(f"ERROR: Failed to update LastGeneratedTimestamp for '{report_name}': {str(e)}")
+
+    return RefinementResponse(
+        report_name=report_name,
+        refined_html_content=refined_html_output,
+        new_template_gcs_path=current_template_gcs_path,
+        message="Template refined and updated successfully."
+    )
 
 
 def format_value(value: Any, format_str: Optional[str], field_type_str: str) -> str:
@@ -749,7 +866,7 @@ async def execute_report_and_get_url(
     if user_placeholder_mappings_json:
         try:
             mappings_list = json.loads(user_placeholder_mappings_json)
-            for mapping_data in mappings_list: # Ensure mapping_data is a dict
+            for mapping_data in mappings_list:
                 if isinstance(mapping_data, dict):
                      user_mappings_dict[mapping_data['original_tag']] = PlaceholderUserMapping(**mapping_data)
                 else:
@@ -857,38 +974,26 @@ async def execute_report_and_get_url(
 
     grand_total_accumulators_exec = {f_n: {"values": [], "config": f_c} for f_n, f_c in field_configs_map.items() if f_n in body_field_names_in_order and f_c.numeric_aggregation and schema_type_map.get(f_n) in NUMERIC_TYPES_FOR_AGG}
     needs_grand_total_row_processing = any((fc.group_summary_action in ['GRAND_TOTAL_ONLY', 'SUBTOTAL_AND_GRAND_TOTAL']) or (fc.numeric_aggregation and fc.field_name in body_field_names_in_order and schema_type_map.get(fc.field_name) in NUMERIC_TYPES_FOR_AGG) for fc_name, fc in field_configs_map.items() if fc)
-    # primary_group_by_field_exec = subtotal_trigger_fields[0] if subtotal_trigger_fields else None # This was simplified, correct is multiple group handling
     current_group_values = {field_name: None for field_name in subtotal_trigger_fields}
     current_group_rows_for_subtotal_calc = []
-
 
     if data_rows_list:
         for i_row, row_data in enumerate(data_rows_list):
             group_break_occurred = False
+            break_level = -1 # Initialize break_level
             if subtotal_trigger_fields:
-                for group_field_name_idx, group_field_name in enumerate(subtotal_trigger_fields): # Check for breaks on any group field
+                for group_field_name_idx, group_field_name in enumerate(subtotal_trigger_fields):
                     new_group_value = row_data.get(group_field_name)
                     if current_group_values[group_field_name] is not None and new_group_value != current_group_values[group_field_name]:
-                        # Break occurred on this field or a higher-level group field
-                        # Process subtotals for all levels from this field down
                         group_break_occurred = True
-                        # Store the level of the break
                         break_level = group_field_name_idx
                         break
                 
                 if group_break_occurred and current_group_rows_for_subtotal_calc:
-                    # Process subtotal for the group that just ended.
-                    # The label should reflect the group that ended.
-                    # For multi-level, this logic needs to be more nuanced to show correct group value.
-                    # For now, using the primary group by field's last value.
-                    primary_group_val_for_label = current_group_values[subtotal_trigger_fields[0]] if subtotal_trigger_fields else "Group"
-                    
+                    group_label_parts = [f"{fn.replace('_', ' ').title()}: {current_group_values[fn]}" for fn_idx, fn in enumerate(subtotal_trigger_fields) if current_group_values[fn] is not None and fn_idx <= break_level] # Label up to break level
                     subtotal_html = "<tr class='subtotal-row' style='font-weight:bold; background-color:#f0f0f0;'>\n"
-                    # Construct a more descriptive label if multi-level, for now simplified:
-                    group_label_parts = [f"{fn.replace('_', ' ').title()}: {current_group_values[fn]}" for fn in subtotal_trigger_fields if current_group_values[fn] is not None]
-
                     subtotal_html += f"  <td style='padding-left: {10 + break_level * 10}px;' colspan='1'>Subtotal ({', '.join(group_label_parts)}):</td>\n"
-                    first_data_col_index_for_subtotal_values = 1 
+                    first_data_col_index_for_subtotal_values = 1
                     for header_key_idx, header_key in enumerate(body_field_names_in_order):
                         if header_key_idx < first_data_col_index_for_subtotal_values: continue
                         field_config = field_configs_map.get(header_key)
@@ -900,70 +1005,56 @@ async def execute_report_and_get_url(
                             subtotal_html += f"  <td style='text-align: {align};'>{fmt_val}</td>\n"
                         else: subtotal_html += "  <td></td>\n"
                     subtotal_html += "</tr>\n"; table_rows_html_str += subtotal_html
-                    current_group_rows_for_subtotal_calc = [] # Reset for new group
+                    current_group_rows_for_subtotal_calc = []
+                    for j in range(break_level, len(subtotal_trigger_fields)): # Reset current values for this level and below
+                        current_group_values[subtotal_trigger_fields[j]] = None
 
-                    # Update current_group_values for levels below the break_level as they are now reset
-                    for j in range(break_level, len(subtotal_trigger_fields)):
-                        current_group_values[subtotal_trigger_fields[j]] = None 
-
-            # Update current group values for the current row
             if subtotal_trigger_fields:
                 for group_field_name in subtotal_trigger_fields:
                     current_group_values[group_field_name] = row_data.get(group_field_name)
                 current_group_rows_for_subtotal_calc.append(row_data)
 
-            # Generate data row HTML
             row_html_item = "<tr>\n"
             for idx_hk, header_key in enumerate(body_field_names_in_order):
                 cell_value = row_data.get(header_key); field_config = field_configs_map.get(header_key); field_type = schema_type_map.get(header_key, "STRING")
                 display_value = True
-                
-                # Handle repeat_group_value for all grouping fields
-                is_grouping_field = header_key in subtotal_trigger_fields
-                if is_grouping_field:
+                is_grouping_field_for_display = header_key in subtotal_trigger_fields
+                if is_grouping_field_for_display:
                     field_config_for_group_by_display = field_configs_map.get(header_key)
                     if field_config_for_group_by_display and field_config_for_group_by_display.repeat_group_value == 'SHOW_ON_CHANGE':
                         if i_row > 0:
-                            # Check if this grouping field and all higher-level grouping fields are the same as the previous row
                             same_as_prev_for_this_and_higher_levels = True
-                            # Find index of current header_key in subtotal_trigger_fields
-                            current_group_field_level = -1
-                            try: current_group_field_level = subtotal_trigger_fields.index(header_key)
-                            except ValueError: pass # Should not happen if is_grouping_field is true
-                                
-                            if current_group_field_level != -1:
-                                for k_level_check in range(current_group_field_level + 1):
-                                    check_field = subtotal_trigger_fields[k_level_check]
-                                    if row_data.get(check_field) != data_rows_list[i_row-1].get(check_field):
-                                        same_as_prev_for_this_and_higher_levels = False; break
-                                if same_as_prev_for_this_and_higher_levels: display_value = False
-                                
+                            current_group_field_level_for_display = subtotal_trigger_fields.index(header_key)
+                            for k_level_check in range(current_group_field_level_for_display + 1):
+                                check_field = subtotal_trigger_fields[k_level_check]
+                                if row_data.get(check_field) != data_rows_list[i_row-1].get(check_field):
+                                    same_as_prev_for_this_and_higher_levels = False; break
+                            if same_as_prev_for_this_and_higher_levels: display_value = False
                 formatted_val = format_value(cell_value, field_config.number_format if field_config else None, field_type) if display_value else ""
-                default_align = "left"; align_style = ""
+                default_align = "left"; align_style_str = ""
                 if field_type in NUMERIC_TYPES_FOR_AGG : default_align = "right"
                 align_val = (field_config.alignment if field_config else None) or default_align
-                
-                # Indentation for grouping fields
-                indent_style = ""
-                if is_grouping_field:
-                    try:
-                        level = subtotal_trigger_fields.index(header_key)
-                        indent_style = f"padding-left: {10 + level * 15}px; " # Base padding + indent per level
-                    except ValueError: pass # Should not happen
-
-                if align_val or indent_style: align_style=f"style='{indent_style}text-align: {align_val};'"
-
-                row_html_item += f"  <td {align_style}>{formatted_val}</td>\n"
+                indent_px = 0
+                if is_grouping_field_for_display:
+                    try: level = subtotal_trigger_fields.index(header_key); indent_px = 10 + level * 15
+                    except ValueError: pass
+                align_style_parts = []
+                if indent_px > 0: align_style_parts.append(f"padding-left: {indent_px}px;")
+                if align_val: align_style_parts.append(f"text-align: {align_val};")
+                if align_style_parts: align_style_str = f"style='{' '.join(align_style_parts)}'"
+                row_html_item += f"  <td {align_style_str}>{formatted_val}</td>\n"
                 if header_key in grand_total_accumulators_exec and cell_value is not None:
                     try: grand_total_accumulators_exec[header_key]["values"].append(Decimal(str(cell_value)))
                     except: pass
             row_html_item += "</tr>\n"; table_rows_html_str += row_html_item
 
-        # Process the last subtotal group after the loop
         if subtotal_trigger_fields and current_group_rows_for_subtotal_calc:
-            subtotal_html = "<tr class='subtotal-row' style='font-weight:bold; background-color:#f0f0f0;'>\n"
+            # Process subtotal for the very last group
             group_label_parts = [f"{fn.replace('_', ' ').title()}: {current_group_values[fn]}" for fn in subtotal_trigger_fields if current_group_values[fn] is not None]
-            subtotal_html += f"  <td style='padding-left: 10px;' colspan='1'>Subtotal ({', '.join(group_label_parts)}):</td>\n"
+            subtotal_html = "<tr class='subtotal-row' style='font-weight:bold; background-color:#f0f0f0;'>\n"
+            # For the last subtotal, indentation level should correspond to the deepest group
+            last_group_level = len(subtotal_trigger_fields) -1 if subtotal_trigger_fields else 0
+            subtotal_html += f"  <td style='padding-left: {10 + last_group_level * 10}px;' colspan='1'>Subtotal ({', '.join(group_label_parts)}):</td>\n"
             first_data_col_index_for_subtotal_values = 1
             for header_key_idx, header_key in enumerate(body_field_names_in_order):
                 if header_key_idx < first_data_col_index_for_subtotal_values: continue
@@ -976,8 +1067,6 @@ async def execute_report_and_get_url(
                     subtotal_html += f"  <td style='text-align: {align};'>{fmt_val}</td>\n"
                 else: subtotal_html += "  <td></td>\n"
             subtotal_html += "</tr>\n"; table_rows_html_str += subtotal_html
-
-        # Grand Total Row
         if needs_grand_total_row_processing:
             gt_html = "<tr class='grand-total-row' style='font-weight:bold; background-color:#e0e0e0; border-top: 2px solid #aaa;'>\n  <td style='padding-left: 10px;' colspan='1'>Grand Total:</td>\n"
             first_data_col_index_for_gt_values = 1
@@ -1061,4 +1150,6 @@ async def view_generated_report_endpoint(report_id: str):
 if __name__ == "__main__":
     print("INFO: Starting Uvicorn server for GenAI Report API.")
     default_port = int(os.getenv("PORT", "8080"))
-    uvicorn.run("app:app", host="0.0.0.0", port=default_port, reload=True, workers=1)
+    # Ensure reload is False or handled appropriately for production containers
+    # For local dev, reload=True is fine. For Cloud Run, it's usually False.
+    uvicorn.run("app:app", host="0.0.0.0", port=default_port, reload=(os.getenv("PYTHON_ENV") == "development"))
