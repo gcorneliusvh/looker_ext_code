@@ -204,7 +204,7 @@ async def lifespan(app_fastapi: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-NGROK_URL_FROM_ENV = os.getenv("FRONTEND_NGROK_URL", "https://c530-207-216-175-143.ngrok-free.app")
+NGROK_URL_FROM_ENV = os.getenv("FRONTEND_NGROK_URL", "https://looker-ext-code-17837811141.us-central1.run.app")
 LOOKER_INSTANCE_URL_FROM_ENV = os.getenv("LOOKER_INSTANCE_URL", "https://igmprinting.cloud.looker.com")
 LOOKER_EXTENSION_SANDBOX_HOST = "https://83d14716-08b3-4def-bdca-54f4b2af9f19-extensions.cloud.looker.com" # Replace if yours is different
 allowed_origins_list = ["http://localhost:8080", LOOKER_INSTANCE_URL_FROM_ENV, LOOKER_EXTENSION_SANDBOX_HOST]
@@ -1152,4 +1152,4 @@ if __name__ == "__main__":
     default_port = int(os.getenv("PORT", "8080"))
     # Ensure reload is False or handled appropriately for production containers
     # For local dev, reload=True is fine. For Cloud Run, it's usually False.
-    uvicorn.run("app:app", host="0.0.0.0", port=default_port, reload=(os.getenv("PYTHON_ENV") == "development"))
+    uvicorn.run("app:app", host="0.0.0.0", port=default_port, reload=(os.getenv("PYTHON_ENV") == "development"))    
