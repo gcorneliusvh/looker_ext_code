@@ -11,3 +11,4 @@ python-dotenv # If you are using .env file for GCP_PROJECT_ID etc.
 functions-framework==3.*
 google-cloud-storage
 google-cloud-aiplatform
+looker_sdk

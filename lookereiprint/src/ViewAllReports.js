@@ -1,5 +1,5 @@
 // src/ViewAllReports.js
-import React, { useState, useEffect, useContext } from 'react';
+import React, { useState, useEffect, useMemo, useContext } from 'react';
 import { ExtensionContext } from '@looker/extension-sdk-react';
 import {
     Heading,
@@ -12,10 +12,14 @@ import {
     DialogLayout,
     IconButton,
     Spinner,
-    Icon
+    InputText,
+    FieldSelect,
+    Flex,
+    FlexItem
 } from '@looker/components';
-import { FilterList, Close } from '@styled-icons/material';
+import { FilterList, Close, Edit } from '@styled-icons/material';
 import DynamicFilterUI from './DynamicFilterUI';
+import RefineReportDialog from './RefineReportDialog';
 
 function ViewAllReports({ onSelectReportForFiltering }) {
   const [reports, setReports] = useState([]);
@@ -23,62 +27,78 @@ function ViewAllReports({ onSelectReportForFiltering }) {
   const [error, setError] = useState('');
   const [isExecutingReport, setIsExecutingReport] = useState(false);
 
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isFilterModalOpen, setIsFilterModalOpen] = useState(false);
   const [selectedReportForModal, setSelectedReportForModal] = useState(null);
 
-  const extensionContext = useContext(ExtensionContext);
-  const { extensionSDK } = extensionContext;
+  const [isRefineModalOpen, setIsRefineModalOpen] = useState(false);
+  const [reportNameToRefine, setReportNameToRefine] = useState('');
 
-  // !!! IMPORTANT: Use your current and correct ngrok URL base !!!
-  const NGROK_BASE_URL = 'https://looker-ext-code-17837811141.us-central1.run.app';
+  const [searchTerm, setSearchTerm] = useState('');
+  const [sortConfig, setSortConfig] = useState({ type: 'alphabetical', direction: 'asc' });
 
+  const { extensionSDK } = useContext(ExtensionContext);
+
+  const BACKEND_BASE_URL = 'https://looker-ext-code-17837811141.us-central1.run.app';
+
+  const fetchReportDefinitions = async () => {
+    if (!extensionSDK) {
+      console.warn("ViewAllReports: extensionSDK not available yet for fetching definitions.");
+      setIsLoading(false);
+      setError("Extension SDK not available. Cannot load reports.");
+      return;
+    }
+    console.log("ViewAllReports: Fetching report definitions...");
+    setIsLoading(true);
+    setError('');
+    const backendUrl = `${BACKEND_BASE_URL}/report_definitions`;
+
+    try {
+      const response = await extensionSDK.fetchProxy(backendUrl, {
+        method: 'GET',
+        headers: { 'Accept': 'application/json' },
+      });
+      const data = response.body;
+
+      if (!response.ok) {
+          let errorDetail = `HTTP error ${response.status}`;
+          if (data && data.detail) {
+            errorDetail = data.detail;
+          } else if (data && typeof data === 'string') {
+            errorDetail = data.substring(0,100);
+          } else if (response.statusText) {
+            errorDetail = response.statusText;
+          }
+          throw new Error(errorDetail);
+      }
+
+      const reportsWithParsedData = data.map(report => {
+        let lookConfigs = [];
+        try {
+            if (report.LookConfigsJSON) {
+                lookConfigs = JSON.parse(report.LookConfigsJSON);
+            }
+        } catch (e) {
+            console.error(`Failed to parse LookConfigsJSON for report ${report.ReportName}:`, e);
+        }
+        return {
+            ...report,
+            schema: report.BaseQuerySchemaJSON ? JSON.parse(report.BaseQuerySchemaJSON) : [],
+            lookConfigs: lookConfigs, // Store parsed array
+        };
+      });
+      setReports(reportsWithParsedData);
+      console.log("ViewAllReports: Report definitions loaded.");
+    } catch (err) {
+      console.error("ViewAllReports: Error fetching report definitions:", err);
+      setError(`Failed to load report definitions: ${err.message || 'Unknown error during fetch'}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const fetchReportDefinitions = async () => {
-      if (!extensionSDK) {
-        console.warn("ViewAllReports: extensionSDK not available yet for fetching definitions.");
-      }
-      console.log("ViewAllReports: Fetching real report definitions...");
-      setIsLoading(true);
-      setError('');
-      
-      const backendUrl = `${NGROK_BASE_URL}/report_definitions`;
-
-      try {
-        const response = await fetch(backendUrl, {
-          method: 'GET',
-          headers: {
-            'Accept': 'application/json',
-            'ngrok-skip-browser-warning': 'true'
-          },
-        });
-        const responseText = await response.text();
-        const contentType = response.headers.get('Content-Type');
-        if (!response.ok) {
-          console.error("ViewAllReports: Error fetching definitions - Response not OK", response.status, responseText.substring(0,500));
-          throw new Error(`HTTP error fetching definitions! status: ${response.status} - ${response.statusText}. Response: ${responseText.substring(0, 200)}...`);
-        }
-        if (contentType && contentType.includes('application/json')) {
-          const data = JSON.parse(responseText);
-          const reportsWithParsedSchemas = data.map(report => ({
-            ...report,
-            schema: report.BaseQuerySchemaJSON ? JSON.parse(report.BaseQuerySchemaJSON) : []
-          }));
-          setReports(reportsWithParsedSchemas);
-          console.log("ViewAllReports: Real report definitions loaded.");
-        } else {
-          console.error("ViewAllReports: Error fetching definitions - Expected JSON", contentType, responseText.substring(0,500));
-          throw new Error(`Expected JSON response for definitions, but received '${contentType || 'unknown content type'}'.`);
-        }
-      } catch (err) {
-        console.error("ViewAllReports: Error fetching report definitions:", err);
-        setError(`Failed to load report definitions: ${err.message}`);
-      } finally {
-        setIsLoading(false);
-      }
-    };
     fetchReportDefinitions();
-  }, [extensionSDK]); // Rerun if extensionSDK instance changes (NGROK_BASE_URL is constant within component lifecycle)
+  }, [extensionSDK]);
 
   const openFilterModal = (report) => {
     if (!report.schema || !Array.isArray(report.schema) || report.schema.length === 0) {
@@ -86,12 +106,23 @@ function ViewAllReports({ onSelectReportForFiltering }) {
         return;
     }
     setSelectedReportForModal(report);
-    setIsModalOpen(true);
+    setIsFilterModalOpen(true);
   };
 
   const closeFilterModal = () => {
-    setIsModalOpen(false);
+    setIsFilterModalOpen(false);
     setSelectedReportForModal(null);
+  };
+
+  const openRefineModal = (reportName) => {
+    setReportNameToRefine(reportName);
+    setIsRefineModalOpen(true);
+  };
+
+  const closeRefineModal = () => {
+    setIsRefineModalOpen(false);
+    setReportNameToRefine('');
+    fetchReportDefinitions();
   };
 
   const handleFiltersAppliedAndExecute = async (filterCriteriaFromModal) => {
@@ -99,63 +130,65 @@ function ViewAllReports({ onSelectReportForFiltering }) {
       alert("Error: No report selected for execution.");
       return;
     }
-
-    console.log(`ViewAllReports: Filters received for ${selectedReportForModal.ReportName}:`, filterCriteriaFromModal);
     setIsExecutingReport(true);
-
     const executionPayload = {
         report_definition_name: selectedReportForModal.ReportName,
         filter_criteria_json: JSON.stringify(filterCriteriaFromModal, null, 2)
     };
-
-    console.log("ViewAllReports: Final payload for POST /execute_report:", executionPayload);
-    const fastapiExecuteUrl = `${NGROK_BASE_URL}/execute_report`;
+    const fastapiExecuteUrl = `${BACKEND_BASE_URL}/execute_report`;
 
     try {
-      const response = await fetch(fastapiExecuteUrl, {
+      const response = await extensionSDK.fetchProxy(fastapiExecuteUrl, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'ngrok-skip-browser-warning': 'true'
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(executionPayload),
       });
-
+      const responseData = response.body;
       if (!response.ok) {
-        const errorText = await response.text();
-        console.error("Error executing report from backend:", response.status, response.statusText, errorText);
-        alert(`Error executing report: ${response.status} ${response.statusText}. \nServer said: ${errorText.substring(0, 300)}...`);
-        // No return here, allow finally to run
+        throw new Error(responseData.detail || `Execute report failed: ${response.status}`);
+      }
+      if (responseData && responseData.report_url_path) {
+        const fullReportUrl = BACKEND_BASE_URL + responseData.report_url_path;
+        extensionSDK.openBrowserWindow(fullReportUrl, '_blank');
       } else {
-        const responseData = await response.json(); // Expecting JSON like {"report_url_path": "/view_generated_report/some-id"}
-        if (responseData && responseData.report_url_path) {
-          const fullReportUrl = NGROK_BASE_URL + responseData.report_url_path;
-          console.log("ViewAllReports: Attempting to open report URL with extensionSDK.openBrowserWindow:", fullReportUrl);
-
-          if (extensionSDK && extensionSDK.openBrowserWindow) {
-            try {
-              extensionSDK.openBrowserWindow(fullReportUrl, '_blank');
-            } catch (sdkError) {
-              console.error("Error using extensionSDK.openBrowserWindow with URL:", sdkError);
-              alert(`Failed to open report window using SDK: ${sdkError.message}. Check console.`);
-            }
-          } else {
-            console.warn("ViewAllReports: ExtensionSDK or openBrowserWindow not available. Cannot open report URL.");
-            alert("Looker SDK is not available to open the report window.");
-          }
-        } else {
-          console.error("ViewAllReports: Invalid response from /execute_report. Expected 'report_url_path'. Got:", responseData);
-          alert("Failed to get report URL from backend. Response was not in the expected format.");
-        }
+        throw new Error("Failed to get report URL from backend.");
       }
     } catch (error) {
-      console.error("Network or other error executing report:", error);
+      console.error("Error executing report:", error);
       alert(`Failed to execute report: ${error.message}`);
     } finally {
       setIsExecutingReport(false);
       closeFilterModal();
     }
   };
+
+  const processedReports = useMemo(() => {
+    let displayReports = [...reports];
+
+    // Sorting
+    if (sortConfig.type === 'alphabetical') {
+      displayReports.sort((a, b) => {
+        const nameA = a.ReportName || '';
+        const nameB = b.ReportName || '';
+        const comparison = nameA.toLowerCase().localeCompare(nameB.toLowerCase());
+        return sortConfig.direction === 'asc' ? comparison : -comparison;
+      });
+    } else if (sortConfig.type === 'date') {
+      displayReports.sort((a, b) => {
+        const dateA = new Date(a.LastGeneratedTimestamp || 0).getTime();
+        const dateB = new Date(b.LastGeneratedTimestamp || 0).getTime();
+        return sortConfig.direction === 'asc' ? dateA - dateB : dateB - dateA;
+      });
+    }
+
+    // Filtering
+    if (searchTerm.trim() !== '') {
+      displayReports = displayReports.filter(report =>
+        (report.ReportName || '').toLowerCase().includes(searchTerm.toLowerCase())
+      );
+    }
+    return displayReports;
+  }, [reports, searchTerm, sortConfig]);
 
   if (isLoading) {
     return <Box p="large" display="flex" justifyContent="center"><Spinner /></Box>;
@@ -169,41 +202,95 @@ function ViewAllReports({ onSelectReportForFiltering }) {
       <Heading as="h1" mb="xlarge" fontWeight="semiBold">
         Available Report Definitions
       </Heading>
-      {reports.length === 0 ? (
-        <Text>No report definitions found.</Text>
+
+      <Flex mb="large" justifyContent="space-between" alignItems="flex-end" flexWrap="wrap">
+        <FlexItem flexBasis="50%" minWidth="250px" mb={{xs: "small", md: "none"}}>
+          <InputText
+            placeholder="Search reports by name..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            aria-label="Search reports"
+          />
+        </FlexItem>
+        <Flex alignItems="center">
+          <Text fontSize="small" color="text2" mr="xsmall" whiteSpace="nowrap">Sort by:</Text>
+          <FieldSelect
+            value={sortConfig.type}
+            options={[
+              { value: 'alphabetical', label: 'Name' },
+              { value: 'date', label: 'Last Modified' },
+            ]}
+            onChange={(value) => setSortConfig(prev => ({ ...prev, type: value }))}
+            mr="small"
+            width="130px"
+            aria-label="Sort type"
+          />
+          <FieldSelect
+            value={sortConfig.direction}
+            options={[
+              { value: 'asc', label: 'Asc' },
+              { value: 'desc', label: 'Desc' },
+            ]}
+            onChange={(value) => setSortConfig(prev => ({ ...prev, direction: value }))}
+            width="90px"
+            aria-label="Sort direction"
+          />
+        </Flex>
+      </Flex>
+
+      {processedReports.length === 0 ? (
+        <Text mt="large">{searchTerm ? 'No reports match your search.' : 'No report definitions found.'}</Text>
       ) : (
         <List width="100%" mb="large">
-          {reports.map((report) => (
+          {processedReports.map((report) => (
             <ListItem
               key={report.ReportName}
-              description={`Schema Fields: ${report.schema?.length || 0}. Last Gen: ${report.LastGeneratedTimestamp ? new Date(report.LastGeneratedTimestamp).toLocaleDateString() : 'N/A'}`}
+              description={`Charts: ${report.lookConfigs?.length || 0} | Schema Fields: ${report.schema?.length || 0} | Version: ${report.LatestTemplateVersion || 'N/A'} | Last Mod: ${report.LastGeneratedTimestamp ? new Date(report.LastGeneratedTimestamp).toLocaleString() : 'N/A'}`}
               onClick={() => openFilterModal(report)}
               itemRole="button"
-              style={{ cursor: 'pointer' }}
               disabled={isExecutingReport}
+              px="small"
+              py="medium"
             >
               <Space between alignItems="center" width="100%">
-                <Text fontSize="medium" fontWeight="medium">{report.ReportName}</Text>
-                <Icon icon={<FilterList />} size="small" color="text2" />
+                <Text fontSize="medium" fontWeight="medium" truncate>{report.ReportName}</Text>
+                <Space>
+                   <IconButton
+                    icon={<Edit />}
+                    label="Refine Template"
+                    size="small"
+                    tooltip="Refine AI Generated Template"
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        openRefineModal(report.ReportName);
+                    }}
+                    disabled={isExecutingReport}
+                  />
+                  <IconButton
+                    icon={<FilterList />}
+                    label="Apply Filters & Run"
+                    size="small"
+                    tooltip="Apply Filters & Run Report"
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        openFilterModal(report);
+                    }}
+                    disabled={isExecutingReport}
+                  />
+                </Space>
               </Space>
             </ListItem>
           ))}
         </List>
       )}
 
-      {isModalOpen && selectedReportForModal && (
-        <Dialog isOpen={isModalOpen} onClose={closeFilterModal} maxWidth="80vw" width="800px">
+      {isFilterModalOpen && selectedReportForModal && (
+        <Dialog isOpen={isFilterModalOpen} onClose={closeFilterModal} maxWidth="80vw" width="800px">
           <DialogLayout
             header={
-              <Box display="flex" justifyContent="space-between" alignItems="center" width="100%">
+              <Box display="flex" justifyContent="space-between" alignItems="center" width="100%" p="medium" borderBottom="ui1">
                 <Heading as="h3">Apply Filters: {selectedReportForModal.ReportName}</Heading>
-                <IconButton
-                  icon={<Close />}
-                  label="Close Filters"
-                  onClick={closeFilterModal}
-                  size="small"
-                  disabled={isExecutingReport}
-                />
+                <IconButton icon={<Close />} label="Close Filters" onClick={closeFilterModal} size="small" disabled={isExecutingReport}/>
               </Box>
             }
           >
@@ -211,10 +298,17 @@ function ViewAllReports({ onSelectReportForFiltering }) {
               reportDefinitionName={selectedReportForModal.ReportName}
               schema={selectedReportForModal.schema || []}
               onApplyAndClose={handleFiltersAppliedAndExecute}
-              isExecuting={isExecutingReport}
             />
           </DialogLayout>
         </Dialog>
+      )}
+
+      {isRefineModalOpen && reportNameToRefine && (
+        <RefineReportDialog
+            isOpen={isRefineModalOpen}
+            onClose={closeRefineModal}
+            reportName={reportNameToRefine}
+        />
       )}
     </Box>
   );
