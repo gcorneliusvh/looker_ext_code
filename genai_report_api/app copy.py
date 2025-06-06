@@ -241,7 +241,7 @@ app = FastAPI(lifespan=lifespan)
 
 # --- CORS Configuration ---
 NGROK_URL_FROM_ENV = os.getenv("FRONTEND_NGROK_URL")
-LOOKER_INSTANCE_URL_FROM_ENV = os.getenv("LOOKER_INSTANCE_URL", "https://igmprinting.cloud.looker.com")
+LOOKER_INSTANCE_URL_FROM_ENV = os.getenv("LOOKER_INSTANCE_URL"")
 LOOKER_EXTENSION_SANDBOX_HOST = os.getenv("LOOKER_EXTENSION_SANDBOX_HOST","https://83d14716-08b3-4def-bdca-54f4b2af9f19-extensions.cloud.looker.com")
 CLOUD_RUN_SERVICE_URL = "https://looker-ext-code-17837811141.us-central1.run.app" # User provided
 

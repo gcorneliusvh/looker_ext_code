@@ -8,16 +8,12 @@ import {
     Box,
     Heading,
     Space,
-    IconButton,
-    FieldText,
 } from '@looker/components';
-import { Add, Delete } from '@styled-icons/material';
-import { v4 as uuidv4 } from 'uuid';
 
 import FieldDisplayConfigurator from './FieldDisplayConfigurator';
 import PlaceholderMappingDialog from './PlaceholderMappingDialog';
 
-// --- Styled Components ---
+// --- Styled Components (remain the same) ---
 const FormWrapper = styled.div`
   padding: 25px;
   font-family: Arial, sans-serif;
@@ -115,17 +111,23 @@ function ReportForm() {
   const [promptText, setPromptText] = useState('');
   const [userAttributeMappings, setUserAttributeMappings] = useState('');
 
-  // State for multiple Look configurations
-  const [lookConfigs, setLookConfigs] = useState([]);
-
   const [isFieldConfigModalOpen, setIsFieldConfigModalOpen] = useState(false);
   const [currentSchemaForConfig, setCurrentSchemaForConfig] = useState([]);
   const [fieldDisplayConfigurations, setFieldDisplayConfigurations] = useState([]);
-  
+
   const [calculationRows, setCalculationRows] = useState([]);
 
   const [dryRunLoading, setDryRunLoading] = useState(false);
   const [dryRunError, setDryRunError] = useState('');
+
+  const [userClientId, setUserClientId] = useState('');
+  const [userAttributesLoading, setUserAttributesLoading] = useState(true);
+  const [userAttributesError, setUserAttributesError] = useState('');
+
+  const [manifestConstants, setManifestConstants] = useState(null);
+  const [constantsLoading, setConstantsLoading] = useState(true);
+  const [constantsError, setConstantsError] = useState('');
+  const [configError, setConfigError] = useState('');
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitStatus, setSubmitStatus] = useState('');
@@ -134,7 +136,7 @@ function ReportForm() {
   const [isPlaceholderModalOpen, setIsPlaceholderModalOpen] = useState(false);
   const [currentReportForPlaceholders, setCurrentReportForPlaceholders] = useState('');
   const [lastSuccessfullyDefinedReport, setLastSuccessfullyDefinedReport] = useState('');
-  const [schemaForLastDefinedReport, setSchemaForLastDefinedReport] = useState([]);
+  const [schemaForLastDefinedReport, setSchemaForLastDefinedReport] = useState([]); // New state for schema snapshot
 
 
   const { extensionSDK } = useContext(ExtensionContext);
@@ -143,33 +145,60 @@ function ReportForm() {
   const backendBaseUrl = 'https://looker-ext-code-17837811141.us-central1.run.app';
 
   useEffect(() => {
+    // ... (useEffect for SDK readiness, client attribute, manifest constants - same as before) ...
     let isMounted = true;
     if (extensionSDK) {
         if (extensionSDK.lookerHostData) {
             if(isMounted) setSdkReady(true);
+        } else {
+            if(isMounted) setSdkReady(false);
+            console.warn("ReportForm: SDK object present, but lookerHostData is not yet available.");
         }
+    } else {
+        if(isMounted) {
+            setSdkReady(false);
+            setConfigError("Looker SDK not available. Extension may not function correctly.");
+        }
+        console.error("ReportForm: ExtensionSDK not available.");
     }
+
+    const fetchClientAttribute = async () => {
+      if (!isMounted || !extensionSDK || !extensionSDK.userAttributeGetItem) return;
+      setUserAttributesLoading(true);
+      try {
+        const clientIdValue = await extensionSDK.userAttributeGetItem('client_id');
+        if (isMounted) {
+          const newClientId = clientIdValue ? String(clientIdValue) : '';
+          setUserClientId(newClientId);
+          setUserAttributesError(newClientId ? '' : "'client_id' user attribute not found.");
+        }
+      } catch (error) { console.error("ReportForm: Error fetching client_id:", error); if (isMounted) setUserAttributesError(`Error fetching client_id: ${error.message}`);
+      } finally { if (isMounted) setUserAttributesLoading(false); }
+    };
+
+    const loadManifestConstants = () => {
+        if (!isMounted || !extensionSDK || !extensionSDK.getContextData) return;
+        setConstantsLoading(true); setConstantsError('');
+        try {
+            const contextData = extensionSDK.getContextData(); let foundConstants = null;
+            if (contextData && contextData.constants) { foundConstants = contextData.constants; }
+            if (foundConstants && typeof foundConstants === 'object' && Object.keys(foundConstants).length > 0) {
+                setManifestConstants(foundConstants);
+            } else { setConstantsError("Manifest constants not found or are empty in SDK contextData."); }
+        } catch (error) { console.error("ReportForm: Error loading manifest constants:", error); setConstantsError(`Error loading constants: ${error.message}`);
+        } finally { setConstantsLoading(false); }
+    };
+
+    if (extensionSDK) { fetchClientAttribute(); loadManifestConstants(); }
+    else { if(isMounted) { setUserAttributesLoading(false); setConstantsLoading(false); setUserAttributesError("SDK not ready for UA."); setConstantsError("SDK not ready for MC.");}}
+
     return () => { isMounted = false; };
   }, [extensionSDK]);
 
-  // Handlers for multiple Look configurations
-  const handleAddLookConfig = () => {
-    setLookConfigs(prev => [...prev, { id: uuidv4(), lookId: '', placeholderName: '' }]);
-  };
-
-  const handleRemoveLookConfig = (idToRemove) => {
-    setLookConfigs(prev => prev.filter(config => config.id !== idToRemove));
-  };
-
-  const handleLookConfigChange = (id, fieldName, value) => {
-    setLookConfigs(prev => prev.map(config => 
-        config.id === id ? { ...config, [fieldName]: value } : config
-    ));
-  };
 
   const handleDryRunAndConfigure = async () => {
-    if (!sdkReady) { alert("Looker SDK is not fully initialized."); return; }
-    if (!baseSql.trim()) { alert("Base SQL query cannot be empty."); return; }
+    if (!sdkReady) { const errMsg = "Looker SDK is not fully initialized."; setDryRunError(errMsg); alert(errMsg); return; }
+    if (!baseSql.trim()) { setDryRunError("Base SQL query cannot be empty."); alert("Base SQL query cannot be empty."); return; }
     setDryRunLoading(true); setDryRunError(''); setSubmitStatus('');
     try {
       const dryRunUrl = `${backendBaseUrl}/dry_run_sql_for_schema`;
@@ -180,57 +209,77 @@ function ReportForm() {
       });
       const responseData = response.body;
       if (response.ok && responseData && responseData.schema) {
-        setCurrentSchemaForConfig(responseData.schema);
+        setCurrentSchemaForConfig(responseData.schema); // This is the schema for the *current* SQL input
         setIsFieldConfigModalOpen(true);
       } else {
-        throw new Error(responseData?.detail || "Dry run did not return a schema or was unsuccessful.");
+        throw new Error(responseData?.detail || responseData?.message || responseData?.error || "Dry run did not return a schema or was unsuccessful.");
       }
     } catch (error) {
-        const errorMessage = error.message || "Unknown API error during dry run.";
+        console.error("Dry run error (fetchProxy):", error);
+        const errorMessage = error.message || (error.body?.detail) || "Unknown API error during dry run.";
         setDryRunError(`Dry run failed: ${errorMessage}`);
         alert(`Dry run failed: ${errorMessage}`);
-    } finally {
-      setDryRunLoading(false);
-    }
+    } finally { setDryRunLoading(false); }
   };
 
   const handleApplyFieldConfigs = (configs) => {
-    setFieldDisplayConfigurations(configs);
-    setIsFieldConfigModalOpen(false);
-    setSubmitStatus("Field configurations applied. Ready to save or create report.");
-    setDryRunError('');
+    setFieldDisplayConfigurations(configs); setIsFieldConfigModalOpen(false);
+    setSubmitStatus("Field configurations applied. Ready to save or create report."); setDryRunError('');
   };
-
   const handleCloseConfigModal = () => { setIsFieldConfigModalOpen(false); };
 
   const fetchAndLogPlaceholders = async (nameOfReport) => {
+    // ... (same as previous version - updates submitStatus and discoveredPlaceholders) ...
     if (!sdkReady) {
+        console.error("ReportForm: SDK not available for fetching placeholders.");
         setSubmitStatus(prev => prev + " Error: SDK not ready for placeholder discovery.");
+        return;
+    }
+    if (!nameOfReport) {
+        console.error("ReportForm: Report name is missing for placeholder discovery.");
+        setSubmitStatus(prev => prev + " Error: Report name needed for placeholder discovery.");
         return;
     }
     setSubmitStatus(prev => prev + ` Checking template placeholders for '${nameOfReport}'...`);
     try {
         const discoverUrl = `${backendBaseUrl}/report_definitions/${encodeURIComponent(nameOfReport)}/discover_placeholders`;
-        const response = await extensionSDK.fetchProxy(discoverUrl, {
+        const response = await fetch(discoverUrl, {
             method: 'GET',
-            headers: { 'Accept': 'application/json' }
+            headers: { 'Accept': 'application/json', 'ngrok-skip-browser-warning': 'true' }
         });
-        const data = response.body;
-        if (response.ok && data.template_found && data.placeholders) {
+        const contentType = response.headers.get("content-type");
+        if (!response.ok) {
+            let errorDetail = `HTTP error ${response.status} fetching placeholders.`;
+            if (contentType && contentType.indexOf("application/json") !== -1) {
+                const errorData = await response.json().catch(() => ({})); errorDetail = errorData.detail || errorDetail;
+            } else {
+                const textError = await response.text().catch(() => ""); errorDetail += ` Response not JSON. Body: ${textError.substring(0,100)}...`;
+            }
+            throw new Error(errorDetail);
+        }
+        const data = await response.json();
+        if (data.template_found && data.placeholders) {
+            console.log(`ReportForm: Discovered ${data.placeholders.length} placeholders for report '${nameOfReport}'.`);
             setDiscoveredPlaceholders(data.placeholders);
             setSubmitStatus(prev => prev.replace("Checking template placeholders...", "") + ` Found ${data.placeholders.length} placeholders. Configuration is optional.`);
         } else {
+            console.warn(`ReportForm: Template not found or error discovering placeholders for '${nameOfReport}'. Message: ${data.error_message}`);
             setSubmitStatus(prev => prev.replace("Checking template placeholders...", "") + ` Warning: ${data.error_message || 'Could not discover placeholders.'}`);
             setDiscoveredPlaceholders([]);
         }
     } catch (error) {
+        console.error("ReportForm: Error fetching placeholders:", error);
         setSubmitStatus(prev => prev.replace("Checking template placeholders...", "") + ` Error discovering placeholders: ${error.message}`);
         setDiscoveredPlaceholders([]);
     }
   };
 
   const handlePreviewReport = async (reportNameToPreview) => {
-    if (!reportNameToPreview) return;
+    // ... (same as previous version - generates and opens preview) ...
+    if (!reportNameToPreview) {
+        setSubmitStatus(prev => prev + " Cannot preview: Report name missing.");
+        return;
+    }
     setSubmitStatus(prev => prev + ` Attempting to generate preview for '${reportNameToPreview}'...`);
     setIsSubmitting(true);
 
@@ -240,45 +289,65 @@ function ReportForm() {
             filter_criteria_json: JSON.stringify({})
         };
         const fastapiExecuteUrl = `${backendBaseUrl}/execute_report`;
-        const response = await extensionSDK.fetchProxy(fastapiExecuteUrl, {
+        const response = await fetch(fastapiExecuteUrl, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true' },
             body: JSON.stringify(executionPayload),
         });
-        const responseData = response.body;
+
         if (!response.ok) {
-            throw new Error(responseData.detail || `Preview generation failed: ${response.status}`);
+            const errorText = await response.text();
+            throw new Error(`Preview generation failed: ${response.status} ${response.statusText}. Server: ${errorText.substring(0, 300)}`);
         }
+
+        const responseData = await response.json();
         if (responseData && responseData.report_url_path) {
             const fullReportUrl = backendBaseUrl + responseData.report_url_path;
-            extensionSDK.openBrowserWindow(fullReportUrl, '_blank');
-            setSubmitStatus(prev => prev.replace("Attempting to generate preview...", "") + ` Preview for '${reportNameToPreview}' opened.`);
+            if (extensionSDK && extensionSDK.openBrowserWindow) {
+                extensionSDK.openBrowserWindow(fullReportUrl, '_blank');
+                setSubmitStatus(prev => prev.replace("Attempting to generate preview...", "") + ` Preview for '${reportNameToPreview}' opened.`);
+            } else {
+                throw new Error("Looker SDK not available to open report window.");
+            }
         } else {
             throw new Error("Failed to get report URL from backend for preview.");
         }
     } catch (error) {
+        console.error("ReportForm: Error generating report preview:", error);
         setSubmitStatus(prev => prev.replace("Attempting to generate preview...", "") + ` Error generating preview: ${error.message}`);
     } finally {
         setIsSubmitting(false);
     }
-  };
+};
+
 
   const handleSavePlaceholderMappings = async (reportNameForSave, mappingsToSave) => {
+    // ... (same as previous version - saves mappings) ...
+    console.log("ReportForm: Saving placeholder mappings for", reportNameForSave, mappingsToSave);
     setSubmitStatus(`Saving placeholder mappings for ${reportNameForSave}...`);
     setIsSubmitting(true);
+
     try {
         const finalizeUrl = `${backendBaseUrl}/report_definitions/${encodeURIComponent(reportNameForSave)}/finalize_template`;
-        const response = await extensionSDK.fetchProxy(finalizeUrl, {
+        const response = await fetch(finalizeUrl, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true' },
             body: JSON.stringify({ report_name: reportNameForSave, mappings: mappingsToSave })
         });
-        const responseData = response.body;
+        const contentType = response.headers.get("content-type");
         if (!response.ok) {
-            throw new Error(responseData.detail || "Failed to save placeholder mappings.");
+            let errorDetail = `HTTP error ${response.status} saving mappings.`;
+            if (contentType && contentType.indexOf("application/json") !== -1) {
+                const errorData = await response.json().catch(() => ({})); errorDetail = errorData.detail || errorDetail;
+            } else {
+                const textError = await response.text().catch(() => ""); errorDetail += ` Response not JSON. Body: ${textError.substring(0,100)}...`;
+            }
+            throw new Error(errorDetail);
         }
-        setSubmitStatus(`Placeholder mappings saved successfully for ${reportNameForSave}: ${responseData.message}. Report template has been updated.`);
+        const responseData = await response.json();
+        setSubmitStatus(`Placeholder mappings saved successfully for ${reportNameForSave}: ${responseData.message}. Report definition is now finalized.`);
     } catch (error) {
+        console.error("ReportForm: Error saving placeholder mappings:", error);
         setSubmitStatus(`Error saving placeholder mappings: ${error.message}`);
     } finally {
         setIsSubmitting(false);
@@ -287,66 +356,92 @@ function ReportForm() {
   };
 
   const handleSubmitDefinition = async () => {
-    if (!sdkReady) { alert("Looker SDK not available."); return; }
-    if (!reportName || !imageUrl || !baseSql || !promptText) { alert("All required fields must be filled."); return; }
-    
+    if (!sdkReady) { const errMsg = "Looker SDK not available."; setSubmitStatus(`Error: ${errMsg}`); alert(errMsg); return; }
+    if (!reportName || !imageUrl || !baseSql || !promptText) { setSubmitStatus("Error: All required fields must be filled."); alert("Error: All required fields must be filled."); return; }
+
+    // Ensure currentSchemaForConfig is populated if fieldDisplayConfigurations are present
+    // Or if it's required for placeholder configuration later.
+    // A robust check would be that if fieldDisplayConfigurations exist, currentSchemaForConfig must too.
+    if (fieldDisplayConfigurations.length > 0 && (!currentSchemaForConfig || currentSchemaForConfig.length === 0)) {
+        alert("Field configurations exist, but the schema seems to be missing. Please 'Validate & Configure Fields' first.");
+        return;
+    }
+
     let parsedMappings = {};
+    // ... (JSON parsing for userAttributeMappings - same as before) ...
     if (userAttributeMappings.trim() !== "") {
         try {
             parsedMappings = JSON.parse(userAttributeMappings);
-        } catch (e) { alert(`Error: Invalid JSON in User Attribute Mappings: ${e.message}`); return; }
+            if (typeof parsedMappings !== 'object' || parsedMappings === null || Array.isArray(parsedMappings)) {
+                throw new Error("User Attribute Mappings must be a valid JSON object.");
+            }
+        } catch (e) { setSubmitStatus(`Error: Invalid JSON in User Attribute Mappings: ${e.message}`); alert(`Error: Invalid JSON: ${e.message}`); return; }
     }
+
 
     setIsSubmitting(true);
     setSubmitStatus('Submitting definition...');
     setLastSuccessfullyDefinedReport('');
-    setSchemaForLastDefinedReport([]);
-
-    const finalLookConfigs = lookConfigs
-      .filter(lc => lc.lookId && lc.placeholderName.trim())
-      .map(lc => ({
-        look_id: parseInt(lc.lookId, 10),
-        placeholder_name: lc.placeholderName.trim()
-      }));
+    setSchemaForLastDefinedReport([]); // Reset schema for last report
 
     const definitionPayload = {
       report_name: reportName,
       image_url: imageUrl,
       sql_query: baseSql,
       prompt: promptText,
-      look_configs: finalLookConfigs,
       user_attribute_mappings: parsedMappings,
       field_display_configs: fieldDisplayConfigurations,
-      calculation_row_configs: calculationRows,
+      calculation_row_configs: calculationRows.map(r => ({
+          row_label: r.rowLabel, // Ensure your calculationRows state management provides these
+          values_placeholder_name: r.valuesPlaceholderName,
+          calculated_values: r.calculatedValues.map(cv => ({
+              target_field_name: cv.targetFieldName,
+              calculation_type: cv.calculationType,
+              number_format: cv.numberFormat || null,
+              alignment: cv.alignment || null,
+          }))
+      })),
       subtotal_configs: [],
     };
 
     const currentReportNameForNextSteps = reportName;
-    const currentSchemaSnapshot = [...currentSchemaForConfig];
+    const currentSchemaSnapshot = [...currentSchemaForConfig]; // Take a snapshot before clearing
     const fastapiReportDefsUrl = `${backendBaseUrl}/report_definitions`;
 
     try {
-      const response = await extensionSDK.fetchProxy(fastapiReportDefsUrl, {
+      const response = await fetch(fastapiReportDefsUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true' },
         body: JSON.stringify(definitionPayload),
       });
-      const responseData = response.body;
+      // ... (response error handling - same as before) ...
+      const contentType = response.headers.get("content-type");
       if (!response.ok) {
-        throw new Error(responseData.detail || `Error submitting definition: ${response.status}`);
+        let errorDetail = `HTTP error ${response.status}: ${response.statusText}`;
+        if (contentType && contentType.indexOf("application/json") !== -1) {
+            const jsonData = await response.json().catch(() => ({})); errorDetail = jsonData.detail || errorDetail;
+        } else {
+            const responseTextForError = await response.text().catch(() => ""); errorDetail += responseTextForError ? ` - Server response: ${responseTextForError.substring(0,200)}...` : " - Server response was empty.";
+        }
+        throw new Error(errorDetail);
       }
 
+      const responseData = await response.json();
       setSubmitStatus(`Success! Report definition '${currentReportNameForNextSteps}' saved. Path: ${responseData.template_html_gcs_path || 'N/A'}.`);
       setLastSuccessfullyDefinedReport(currentReportNameForNextSteps);
-      setSchemaForLastDefinedReport(currentSchemaSnapshot);
+      setSchemaForLastDefinedReport(currentSchemaSnapshot); // Set the snapshotted schema
 
       await fetchAndLogPlaceholders(currentReportNameForNextSteps);
       await handlePreviewReport(currentReportNameForNextSteps);
 
-      setReportName(''); setImageUrl(''); setBaseSql(''); setPromptText('');
-      setUserAttributeMappings(''); setLookConfigs([]); setCurrentSchemaForConfig([]);
-      setFieldDisplayConfigurations([]); setCalculationRows([]); setDryRunError('');
+      setReportName(''); setImageUrl(''); setBaseSql(''); setPromptText(''); setUserAttributeMappings('');
+      setCurrentSchemaForConfig([]); // Clear the working schema
+      setFieldDisplayConfigurations([]);
+      setCalculationRows([]);
+      setDryRunError('');
+
     } catch (error) {
+      console.error("Error submitting definition:", error);
       setSubmitStatus(`Error submitting definition: ${error.message}`);
     } finally {
       setIsSubmitting(false);
@@ -355,93 +450,59 @@ function ReportForm() {
 
   const openPlaceholderDialogForLastReport = () => {
     if (lastSuccessfullyDefinedReport) {
+        // Use the snapshotted schema
         if (!schemaForLastDefinedReport || schemaForLastDefinedReport.length === 0) {
-            alert("Schema for the selected report is not available. Please 'Configure Column Display' on a new report definition first.");
-            return;
+            alert("Schema for the selected report is not available. This may happen if the 'Configure Column Display' step was skipped or failed before defining the report.");
+            return; // Prevent opening dialog if schema is missing
         }
         setCurrentReportForPlaceholders(lastSuccessfullyDefinedReport);
+        // discoveredPlaceholders state is already populated by fetchAndLogPlaceholders
         setIsPlaceholderModalOpen(true);
     } else {
-        alert("No report has been successfully defined yet in this session.");
+        alert("No report has been successfully defined yet in this session, or the page was reloaded.");
     }
   };
 
-  const isConfigurationReady = sdkReady;
+
+  const overallLoading = userAttributesLoading || constantsLoading;
+  const isConfigurationReady = sdkReady && backendBaseUrl && backendBaseUrl !== 'YOUR_HARDCODED_NGROK_URL_HERE';
 
   return (
     <FormWrapper>
-      <Heading as="h1" mb="large">Define New GenAI Report</Heading>
-      
+      <h1 style={{ marginBottom: '25px', textAlign: 'left', fontSize: '24px' }}>Define New GenAI Report</h1>
+      {/* ... Config alert ... */}
+
+      {/* ... Form groups for reportName, imageUrl, promptText, userAttributeMappings, baseSql ... */}
       <FormGroup>
         <Label htmlFor="reportName">Report Definition Name <span style={{color: 'red'}}>*</span></Label>
-        <Input type="text" id="reportName" value={reportName} onChange={(e) => setReportName(e.target.value)} placeholder="e.g., Monthly Sales Performance" disabled={!isConfigurationReady || isSubmitting}/>
+        <Input type="text" id="reportName" value={reportName} onChange={(e) => setReportName(e.target.value)} placeholder="e.g., Monthly Sales Performance" disabled={!isConfigurationReady || overallLoading || isSubmitting}/>
+        <Description>A unique name for this report.</Description>
       </FormGroup>
-
       <FormGroup>
         <Label htmlFor="imageUrl">Image URL (for styling guidance) <span style={{color: 'red'}}>*</span></Label>
-        <Input type="text" id="imageUrl" value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} placeholder="https://example.com/style_image.jpg" disabled={!isConfigurationReady || isSubmitting}/>
+        <Input type="text" id="imageUrl" value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} placeholder="https://example.com/style_image.jpg" disabled={!isConfigurationReady || overallLoading || isSubmitting}/>
       </FormGroup>
-      
        <FormGroup>
         <Label htmlFor="promptText">Base Prompt for Gemini (Template Generation) <span style={{color: 'red'}}>*</span></Label>
-        <Textarea id="promptText" value={promptText} onChange={(e) => setPromptText(e.target.value)} placeholder="Generate an HTML template with placeholders..." rows={6} disabled={!isConfigurationReady || isSubmitting}/>
+        <Textarea id="promptText" value={promptText} onChange={(e) => setPromptText(e.target.value)} placeholder="Generate an HTML template with placeholders..." rows={6} disabled={!isConfigurationReady || overallLoading || isSubmitting}/>
+        <Description>Instructions for the AI to generate the HTML template structure.</Description>
       </FormGroup>
-
-      <FormGroup>
-        <Label htmlFor="baseSql">Base SQL Query <span style={{color: 'red'}}>*</span></Label>
-        <Textarea id="baseSql" value={baseSql} onChange={(e) => setBaseSql(e.target.value)} placeholder="SELECT ..." rows={8} disabled={!isConfigurationReady || isSubmitting}/>
-      </FormGroup>
-
-      {/* Multiple Look Configs UI */}
-      <FormGroup>
-        <Label>Embed Looks as Images (Optional)</Label>
-        <Description>Add charts from saved Looks. Provide the Look ID and a unique placeholder name for Gemini to use in the template (e.g., `sales_trend_chart`).</Description>
-        <Box mt="medium">
-            {lookConfigs.map((config) => (
-                <Space key={config.id} mb="small" width="100%" gap="small">
-                    <FieldText
-                        label="Look ID"
-                        value={config.lookId}
-                        onChange={(e) => handleLookConfigChange(config.id, 'lookId', e.target.value)}
-                        placeholder="e.g., 123"
-                        type="number"
-                    />
-                    <FieldText
-                        label="Placeholder Name"
-                        value={config.placeholderName}
-                        onChange={(e) => handleLookConfigChange(config.id, 'placeholderName', e.target.value)}
-                        placeholder="e.g., sales_trend_chart"
-                        description="Use letters, numbers, underscores"
-                    />
-                    <IconButton
-                        icon={<Delete />}
-                        label="Remove Look"
-                        onClick={() => handleRemoveLookConfig(config.id)}
-                        mt="large"
-                    />
-                </Space>
-            ))}
-        </Box>
-        <LookerButton 
-            onClick={handleAddLookConfig} 
-            iconBefore={<Add />} 
-            mt="small"
-            size="small"
-            disabled={isSubmitting}
-        >
-            Add Chart from Look
-        </LookerButton>
-      </FormGroup>
-
       <FormGroup>
         <Label htmlFor="userAttributeMappings">User Attribute Mappings (JSON)</Label>
-        <Textarea id="userAttributeMappings" value={userAttributeMappings} onChange={(e) => setUserAttributeMappings(e.target.value)} placeholder='e.g., {"looker_attribute_name": "bq_column_name"}' rows={3} disabled={!isConfigurationReady || isSubmitting} />
+        <Textarea id="userAttributeMappings" value={userAttributeMappings} onChange={(e) => setUserAttributeMappings(e.target.value)} placeholder='e.g., {"looker_attribute_name": "bq_column_name"}' rows={4} disabled={!isConfigurationReady || overallLoading || isSubmitting} />
+        <Description>Map Looker user attributes to BigQuery columns for filtering.</Description>
       </FormGroup>
+      <FormGroup>
+        <Label htmlFor="baseSql">Base SQL Query <span style={{color: 'red'}}>*</span></Label>
+        <Textarea id="baseSql" value={baseSql} onChange={(e) => setBaseSql(e.target.value)} placeholder="SELECT column_a, column_b FROM your_table.users WHERE ..." rows={8} disabled={!isConfigurationReady || overallLoading || isSubmitting}/>
+        <Description>Main SQL. After entering, click "Validate & Configure Fields" below.</Description>
+      </FormGroup>
+
 
       <FormGroup>
         <LookerButton
             onClick={handleDryRunAndConfigure}
-            disabled={!isConfigurationReady || dryRunLoading || !baseSql.trim() || isSubmitting}
+            disabled={!isConfigurationReady || dryRunLoading || overallLoading || !baseSql.trim() || isSubmitting}
             width="100%"
             iconBefore={dryRunLoading ? <Spinner size={18}/> : undefined}
         >
@@ -458,23 +519,66 @@ function ReportForm() {
         reportName={reportName}
         initialConfigs={fieldDisplayConfigurations}
       />
-      
+
+      {/* ... Summary Rows Logic and Overall Calculation Rows sections ... */}
+      {currentSchemaForConfig && currentSchemaForConfig.length > 0 && (
+        <Box mt="large" pt="medium" borderTop="1px solid" borderColor="ui3">
+            <Heading as="h4" mb="small">Summary Rows Logic</Heading>
+            <p style={{color: 'grey', fontSize: 'small'}}>
+                Summary actions (e.g., 'Subtotals When Group Changes', 'Grand Totals Only') can be configured per string field in the "Configure Column Display" section.
+                Numeric fields can have their aggregation type (Sum, Avg, etc.) set there too. The backend uses these settings to generate summary rows.
+            </p>
+        </Box>
+      )}
+      {currentSchemaForConfig && currentSchemaForConfig.length > 0 && (
+        <Box mt="large" pt="medium" borderTop="1px solid" borderColor="ui3">
+            <Heading as="h4" mb="medium">Overall Calculation Rows</Heading>
+            <p style={{color: 'grey', fontSize: 'small'}}>UI for defining *additional* overall calculation rows (e.g., specific custom footers beyond standard totals) is planned for a future update.</p>
+        </Box>
+      )}
+
+
       {isPlaceholderModalOpen && currentReportForPlaceholders && (
           <PlaceholderMappingDialog
               isOpen={isPlaceholderModalOpen}
-              onClose={() => {setIsPlaceholderModalOpen(false); setCurrentReportForPlaceholders('');}}
+              onClose={() => {
+                  setIsPlaceholderModalOpen(false);
+                  setCurrentReportForPlaceholders('');
+                  // Consider if discoveredPlaceholders should be cleared here or if it should persist
+                  // for the last report until a new definition cycle starts.
+                  // setDiscoveredPlaceholders([]);
+              }}
               reportName={currentReportForPlaceholders}
-              discoveredPlaceholders={discoveredPlaceholders}
-              schema={schemaForLastDefinedReport}
+              discoveredPlaceholders={discoveredPlaceholders} // Pass the currently discovered placeholders
+              schema={schemaForLastDefinedReport} // Pass the snapshotted schema
               onApplyMappings={handleSavePlaceholderMappings}
           />
       )}
+
+      <DebugBox>
+        {/* ... DebugBox content ... */}
+        <h4>Configuration & User Context:</h4>
+        { (userAttributesLoading || constantsLoading) && <Spinner size={20} /> }
+        { !userAttributesLoading && userAttributesError && <p style={{color: 'red'}}>Client ID Error: {userAttributesError}</p>}
+        { !userAttributesLoading && !userAttributesError && userClientId && ( <p>Client ID: <strong>{userClientId}</strong></p> )}
+        { !userAttributesLoading && !userAttributesError && !userClientId && ( <p>Client ID: Not found/set</p> )}
+        <div style={{marginTop: '10px'}}>
+          <p><strong>Manifest Constants (Example):</strong></p>
+          { constantsLoading && <p>Loading constants...</p>}
+          { !constantsLoading && constantsError && <p style={{color: 'red'}}>{constantsError}</p>}
+          { !constantsLoading && !constantsError && manifestConstants && Object.keys(manifestConstants).length > 0 ? (
+            <><p>GCP_PROJECT_ID: <strong>{manifestConstants.GCP_PROJECT_ID || "Not set"}</strong></p></>
+          ) : ( !constantsLoading && !constantsError && <p>Manifest constants empty/not found.</p> )}
+        </div>
+        <p>Backend URL (Hardcoded): <strong>{backendBaseUrl}</strong></p>
+        <p>SDK Ready: <strong>{sdkReady ? 'Yes' : 'No'}</strong></p>
+      </DebugBox>
 
       <FormGroup style={{ marginTop: '30px' }}>
         <Button
             type="button"
             onClick={handleSubmitDefinition}
-            disabled={!isConfigurationReady || isSubmitting || dryRunLoading}
+            disabled={!isConfigurationReady || isSubmitting || overallLoading || dryRunLoading}
         >
           {isSubmitting ? "Saving Definition..." : "Create/Update Report Definition & Preview"}
         </Button>
@@ -485,7 +589,7 @@ function ReportForm() {
             <LookerButton
                 type="button"
                 onClick={openPlaceholderDialogForLastReport}
-                disabled={isSubmitting || dryRunLoading || !schemaForLastDefinedReport || schemaForLastDefinedReport.length === 0}
+                disabled={isSubmitting || overallLoading || dryRunLoading || !schemaForLastDefinedReport || schemaForLastDefinedReport.length === 0}
                 width="100%"
                 color="neutral"
             >
@@ -497,9 +601,9 @@ function ReportForm() {
       {submitStatus && (
         <FormGroup>
           <p style={{
-              color: submitStatus.toLowerCase().includes("error") || submitStatus.toLowerCase().includes("failed") ? 'red' : 'green',
+              color: submitStatus.toLowerCase().includes("error") || submitStatus.toLowerCase().includes("failed") || submitStatus.toLowerCase().includes("timeout") ? 'red' : 'green',
               marginTop: '10px', border: '1px solid', padding: '10px', borderRadius: '4px',
-              borderColor: submitStatus.toLowerCase().includes("error") || submitStatus.toLowerCase().includes("failed") ? 'red' : 'green'
+              borderColor: submitStatus.toLowerCase().includes("error") || submitStatus.toLowerCase().includes("failed") || submitStatus.toLowerCase().includes("timeout") ? 'red' : 'green'
             }}>
             {submitStatus}
           </p>
