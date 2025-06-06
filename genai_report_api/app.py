@@ -253,36 +253,14 @@ async def lifespan(app_fastapi: FastAPI):
         
     # NEW: Add Looker SDK initialization block
     try:
-        print("INFO: Configuring Looker SDK from environment variables...")
-        looker_client_id = os.getenv("LOOKER_API_CLIENT_ID")
-        looker_client_secret = os.getenv("LOOKER_API_CLIENT_SECRET")
-        looker_base_url = os.getenv("LOOKER_INSTANCE_URL")
-
-        if not looker_client_id or not looker_client_secret or not looker_base_url:
-            print("WARN: Looker SDK environment variables not fully set. SDK will not be available.")
-            config.looker_sdk_client = None
-        else:
-            looker_api_url = f"{looker_base_url.rstrip('/')}:19999"
-            
-            # Create a dictionary of settings
-            sdk_settings = {
-                "base_url": looker_api_url,
-                "client_id": looker_client_id,
-                "client_secret": looker_client_secret,
-                "verify_ssl": True,
-            }
-            
-            # THIS IS THE CORRECTED INITIALIZATION METHOD
-            # Use ** to unpack the dictionary into keyword arguments
-            config.looker_sdk_client = looker_sdk.init40(**sdk_settings)
-            
-            print("INFO: Looker SDK has been configured successfully.")
-
+        print("INFO: Initializing Looker SDK from standard environment variables...")
+        
+        # No arguments are needed! The SDK does the work.
+        config.looker_sdk_client = looker_sdk.init40()
+        
+        print("INFO: Looker SDK initialized successfully.")
     except Exception as e:
-        # This will now catch any other unexpected errors during init.
-        print(f"FATAL: Looker SDK Configuration Error during startup: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"FATAL: Looker SDK auto-initialization from environment failed: {e}")
         config.looker_sdk_client = None
 
     yield
