@@ -1188,24 +1188,24 @@ async def execute_report_and_get_url(
     if look_configs:
         print(f"INFO: Rendering {len(look_configs)} Look(s) as PNGs from Looker.")
         for look_config in look_configs:
+            placeholder_to_replace = f"{{{{{look_config.placeholder_name}}}}}"
             try:
-                print(f" - Rendering Look ID {look_config.look_id} for placeholder {{{{{look_config.placeholder_name}}}}}")
+                print(f" - Rendering Look ID {look_config.look_id} for placeholder {placeholder_to_replace}")
                 image_bytes = looker_sdk.run_look(look_id=str(look_config.look_id), result_format="png")
                 
                 base64_image = base64.b64encode(image_bytes).decode('utf-8')
                 image_src_string = f"data:image/png;base64,{base64_image}"
                 
-                # FIX 1: Added quotes around the alt attribute's value
+                # THIS IS THE CORRECTED LINE - The extra `<img src=` is removed
                 img_tag = f'<img src="{image_src_string}" alt="Chart from Look {look_config.look_id}" style="width:100%; height:auto; border: 1px solid #ccc;" />'
                 
-                placeholder_to_replace = f"{{{{{look_config.placeholder_name}}}}}"
                 populated_html = populated_html.replace(placeholder_to_replace, img_tag)
 
             except Exception as e:
                 print(f"ERROR: Failed to render Look {look_config.look_id} from Looker API: {e}")
                 error_img_tag = f'<div style="border:2px dashed red; padding:20px; text-align:center;">Error: Could not load chart from Look ID {look_config.look_id}.<br/><small>{str(e)}</small></div>'
-                placeholder_to_replace = f"{{{{{look_config.placeholder_name}}}}}"
                 populated_html = populated_html.replace(placeholder_to_replace, error_img_tag)
+
 
     report_id = str(uuid.uuid4())
     generated_report_gcs_blob_name = f"{config.GCS_GENERATED_REPORTS_PREFIX}{report_id}.html"
