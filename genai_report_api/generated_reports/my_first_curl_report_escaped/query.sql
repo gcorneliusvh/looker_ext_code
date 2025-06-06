@@ -1,1 +1,0 @@
-SELECT * FROM \`genaimarketingdemo.report_printing.report_list\`
