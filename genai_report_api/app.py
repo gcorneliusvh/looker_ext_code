@@ -264,19 +264,25 @@ async def lifespan(app_fastapi: FastAPI):
         else:
             looker_api_url = f"{looker_base_url.rstrip('/')}:19999"
             
+            # Create a dictionary of settings
+            sdk_settings = {
+                "base_url": looker_api_url,
+                "client_id": looker_client_id,
+                "client_secret": looker_client_secret,
+                "verify_ssl": True,
+            }
+            
             # THIS IS THE CORRECTED INITIALIZATION METHOD
-            config.looker_sdk_client = looker_sdk.init40(
-                config_settings={
-                    "base_url": looker_api_url,
-                    "client_id": looker_client_id,
-                    "client_secret": looker_client_secret,
-                    "verify_ssl": True,
-                }
-            )
+            # Use ** to unpack the dictionary into keyword arguments
+            config.looker_sdk_client = looker_sdk.init40(**sdk_settings)
+            
             print("INFO: Looker SDK has been configured successfully.")
 
     except Exception as e:
+        # This will now catch any other unexpected errors during init.
         print(f"FATAL: Looker SDK Configuration Error during startup: {e}")
+        import traceback
+        traceback.print_exc()
         config.looker_sdk_client = None
 
     yield
