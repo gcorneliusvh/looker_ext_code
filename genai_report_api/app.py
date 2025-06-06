@@ -25,6 +25,8 @@ import vertexai
 from vertexai.generative_models import GenerativeModel, Part, Image
 from vertexai.generative_models import HarmCategory, HarmBlockThreshold, GenerationConfig
 
+import looker_sdk  # <-- THIS LINE IS MOST LIKELY MISSING
+
 # NEW: Import Looker SDK
 from looker_sdk import methods40, models40
 
