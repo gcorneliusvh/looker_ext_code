@@ -953,7 +953,6 @@ async def execute_report_and_get_url(
     gcs_client: storage.Client = Depends(get_storage_client_dep),
     looker_sdk: methods40.Looker40SDK = Depends(get_looker_sdk_client_dep)
 ):
-    # This is the function the user provided, complete and in full.
     report_definition_name = payload.report_definition_name
     filter_criteria_json_str = payload.filter_criteria_json
     print(f"INFO: POST /execute_report for '{report_definition_name}'. Filters JSON: {filter_criteria_json_str}")
@@ -1018,7 +1017,6 @@ async def execute_report_and_get_url(
     current_query_params_for_bq_exec = []; current_conditions_exec = []; applied_filter_values_for_template_exec = {}; param_idx_exec = 0
     try: looker_filters_payload_exec = json.loads(filter_criteria_json_str or "{}")
     except json.JSONDecodeError as e: raise HTTPException(status_code=400, detail=f"Invalid JSON for filter_criteria: {str(e)}")
-
     parsed_user_attribute_mappings_exec: Dict[str, str] = json.loads(user_attr_map_json or '{}')
     for fe_key, val_str in looker_filters_payload_exec.get("user_attributes", {}).items():
         bq_col = parsed_user_attribute_mappings_exec.get(fe_key)
@@ -1249,15 +1247,16 @@ async def execute_report_and_get_url(
                 base64_image = base64.b64encode(image_bytes).decode('utf-8')
                 image_src_string = f"data:image/png;base64,{base64_image}"
                 
-                img_tag = f'<img src="{image_src_string}" alt="Chart from Look {look_config.look_id}" style="width:100%; height:auto; border: 1px solid #ccc;" />'
-                
-                populated_html = populated_html.replace(placeholder_to_replace, img_tag)
+                # FIX: Replace the placeholder with only the data URI string.
+                # This assumes the AI template already contains the <img src="{{placeholder}}"> structure.
+                populated_html = populated_html.replace(placeholder_to_replace, image_src_string)
 
             except Exception as e:
                 print(f"ERROR: Failed to render Look {look_config.look_id} from Looker API: {e}")
-                error_img_tag = f'<div style="border:2px dashed red; padding:20px; text-align:center;">Error: Could not load chart from Look ID {look_config.look_id}.<br/><small>{str(e)}</small></div>'
-                populated_html = populated_html.replace(placeholder_to_replace, error_img_tag)
-    
+                # FIX: On error, replace the placeholder with an empty string to avoid breaking the HTML structure.
+                # This will result in a standard broken image icon in the browser.
+                populated_html = populated_html.replace(placeholder_to_replace, "")
+                    
     report_id = str(uuid.uuid4())
     generated_report_gcs_blob_name = f"{config.GCS_GENERATED_REPORTS_PREFIX}{report_id}.html"
     try:
@@ -1269,6 +1268,7 @@ async def execute_report_and_get_url(
 
     report_url_path = f"/view_generated_report/{report_id}"
     return JSONResponse(content={"report_url_path": report_url_path})
+
 
 @app.get("/view_generated_report/{report_id}", response_class=HTMLResponse)
 async def view_generated_report_endpoint(
