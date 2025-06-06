@@ -251,28 +251,30 @@ async def lifespan(app_fastapi: FastAPI):
         
     # NEW: Add Looker SDK initialization block
     try:
-        print("INFO: Initializing Looker SDK from environment variables...")
+        print("INFO: Configuring Looker SDK from environment variables...")
         looker_client_id = os.getenv("LOOKER_API_CLIENT_ID")
         looker_client_secret = os.getenv("LOOKER_API_CLIENT_SECRET")
         looker_base_url = os.getenv("LOOKER_INSTANCE_URL")
 
         if not looker_client_id or not looker_client_secret or not looker_base_url:
-            raise ValueError("LOOKER_API_CLIENT_ID, LOOKER_API_CLIENT_SECRET, and LOOKER_INSTANCE_URL environment variables must be set.")
-        
-        looker_api_url = f"{looker_base_url.rstrip('/')}:19999"
-        
-        config.looker_sdk_client = methods40.Looker40SDK.configure(
-            config_settings={
-                "base_url": looker_api_url,
-                "client_id": looker_client_id,
-                "client_secret": looker_client_secret,
-                "verify_ssl": True,
-            }
-        )
-        me = config.looker_sdk_client.me()
-        print(f"INFO: Looker SDK initialized successfully. Authenticated as user: {me.display_name}")
+            print("WARN: Looker SDK environment variables not fully set. SDK will not be available.")
+            config.looker_sdk_client = None
+        else:
+            looker_api_url = f"{looker_base_url.rstrip('/')}:19999"
+            
+            # THIS IS THE CORRECTED INITIALIZATION METHOD
+            config.looker_sdk_client = looker_sdk.init40(
+                config_settings={
+                    "base_url": looker_api_url,
+                    "client_id": looker_client_id,
+                    "client_secret": looker_client_secret,
+                    "verify_ssl": True,
+                }
+            )
+            print("INFO: Looker SDK has been configured successfully.")
+
     except Exception as e:
-        print(f"FATAL: Looker SDK Initialization Error: {e}")
+        print(f"FATAL: Looker SDK Configuration Error during startup: {e}")
         config.looker_sdk_client = None
 
     yield
