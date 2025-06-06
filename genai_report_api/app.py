@@ -181,7 +181,6 @@ NUMERIC_TYPES_FOR_AGG = ["INTEGER", "INT64", "FLOAT", "FLOAT64", "NUMERIC", "DEC
 
 # --- Lifespan Function ---
 @asynccontextmanager
-@asynccontextmanager
 async def lifespan(app_fastapi: FastAPI):
     print("INFO: FastAPI application startup...")
     global config
@@ -354,7 +353,6 @@ def generate_and_save_report_assets(
         import traceback
         traceback.print_exc()
 
-app = FastAPI(lifespan=lifespan)
 
 # --- CORS Configuration ---
 NGROK_URL_FROM_ENV = os.getenv("FRONTEND_NGROK_URL")
@@ -1256,7 +1254,7 @@ async def execute_report_and_get_url(
                 # FIX: On error, replace the placeholder with an empty string to avoid breaking the HTML structure.
                 # This will result in a standard broken image icon in the browser.
                 populated_html = populated_html.replace(placeholder_to_replace, "")
-                    
+
     report_id = str(uuid.uuid4())
     generated_report_gcs_blob_name = f"{config.GCS_GENERATED_REPORTS_PREFIX}{report_id}.html"
     try:
