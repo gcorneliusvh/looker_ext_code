@@ -25,6 +25,7 @@ import vertexai
 from vertexai.generative_models import GenerativeModel, Part, Image
 from vertexai.generative_models import HarmCategory, HarmBlockThreshold, GenerationConfig
 
+# NEW: Import Looker SDK
 from looker_sdk import methods40, models40
 
 # --- AppConfig & Global Configs ---
@@ -35,6 +36,7 @@ class AppConfig:
     vertex_ai_initialized: bool = False
     bigquery_client: Union[bigquery.Client, None] = None
     storage_client: Union[storage.Client, None] = None
+    # NEW: Add Looker SDK client to config
     looker_sdk_client: Union[methods40.Looker40SDK, None] = None
     GCS_BUCKET_NAME: str = os.getenv("GCS_BUCKET_NAME", "")
     GCS_SYSTEM_INSTRUCTION_PATH: str = os.getenv("GCS_SYSTEM_INSTRUCTION_PATH", "system_instructions/default_system_instruction.txt")
@@ -63,7 +65,7 @@ Create an HTML structure that visually aligns with a provided style-guide image 
 Your entire response MUST be ONLY the raw HTML code.
 - Start directly with `<!DOCTYPE html>` or `<html>`.
 - End with `</html>`.
-- Do NOT include ANY markdown (like ```html or ```), comments outside of standard HTML comments (``), or any explanatory text or conversational preamble/postamble. Just the code.
+- Do NOT include ANY markdown (like ```html or ```), comments outside of standard HTML comments (), or any explanatory text or conversational preamble/postamble. Just the code.
 
 **Placeholder Syntax (VERY IMPORTANT):**
 All dynamic data placeholders you create or are instructed to use MUST be enclosed in **double curly braces**. For example: `{{YourPlaceholderKey}}`. Do NOT use single braces, square brackets, or any other format.
@@ -101,6 +103,7 @@ Custom Calculation Row: `<tr><td>Totals:</td>{{MyOverallTotals}}</tr>`
 """
 
 # --- Pydantic Models ---
+# NEW: Add LookConfig
 class LookConfig(BaseModel):
     look_id: int
     placeholder_name: str
@@ -122,7 +125,8 @@ class FieldDisplayConfig(BaseModel):
     numeric_aggregation: Optional[str] = None
 class ReportDefinitionPayload(BaseModel):
     report_name: str; image_url: str; sql_query: str; prompt: str
-    look_configs: Optional[List[LookConfig]] = None # Changed from look_id
+    # NEW: Add look_configs
+    look_configs: Optional[List[LookConfig]] = None
     field_display_configs: Optional[List[FieldDisplayConfig]] = None
     user_attribute_mappings: Optional[Dict[str, str]] = Field(default_factory=dict)
     calculation_row_configs: Optional[List[CalculationRowConfig]] = None
@@ -132,7 +136,8 @@ class ExecuteReportPayload(BaseModel):
     report_definition_name: str; filter_criteria_json: str = Field(default="{}")
 class ReportDefinitionListItem(BaseModel):
     ReportName: str; Prompt: Optional[str] = None; SQL: Optional[str] = None; ScreenshotURL: Optional[str] = None
-    LookConfigsJSON: Optional[str] = None # Changed from LookID
+    # NEW: Add LookConfigsJSON
+    LookConfigsJSON: Optional[str] = None
     TemplateURL: Optional[str] = None; LatestTemplateVersion: Optional[int] = None
     BaseQuerySchemaJSON: Optional[str] = None
     UserAttributeMappingsJSON: Optional[str] = None; FieldDisplayConfigsJSON: Optional[str] = None
@@ -143,22 +148,37 @@ class SystemInstructionPayload(BaseModel): system_instruction: str
 class SqlQueryPayload(BaseModel): sql_query: str
 
 class PlaceholderMappingSuggestion(BaseModel):
-    map_to_type: Optional[str] = None; map_to_value: Optional[str] = None; usage_as: Optional[str] = None
+    map_to_type: Optional[str] = None
+    map_to_value: Optional[str] = None
+    usage_as: Optional[str] = None
 class DiscoveredPlaceholderInfo(BaseModel):
-    original_tag: str; key_in_tag: str; status: str
+    original_tag: str
+    key_in_tag: str
+    status: str
     suggestion: Optional[PlaceholderMappingSuggestion] = None
 class DiscoverPlaceholdersResponse(BaseModel):
-    report_name: str; placeholders: List[DiscoveredPlaceholderInfo]; template_found: bool; error_message: Optional[str] = None
+    report_name: str; placeholders: List[DiscoveredPlaceholderInfo]
+    template_found: bool; error_message: Optional[str] = None
 
 class PlaceholderUserMapping(BaseModel):
-    original_tag: str; map_type: str; map_to_schema_field: Optional[str] = None
-    fallback_value: Optional[str] = None; static_text_value: Optional[str] = None
+    original_tag: str
+    map_type: str
+    map_to_schema_field: Optional[str] = None
+    fallback_value: Optional[str] = None
+    static_text_value: Optional[str] = None
+
 class FinalizeTemplatePayload(BaseModel):
-    report_name: str; mappings: List[PlaceholderUserMapping]
+    report_name: str
+    mappings: List[PlaceholderUserMapping]
+
 class RefinementPayload(BaseModel):
     refinement_prompt_text: str
+
 class RefinementResponse(BaseModel):
-    report_name: str; refined_html_content: str; new_template_gcs_path: str; message: str
+    report_name: str
+    refined_html_content: str
+    new_template_gcs_path: str
+    message: str
 
 # --- Global Constants ---
 NUMERIC_TYPES_FOR_AGG = ["INTEGER", "INT64", "FLOAT", "FLOAT64", "NUMERIC", "DECIMAL", "BIGNUMERIC", "BIGDECIMAL"]
@@ -229,14 +249,15 @@ async def lifespan(app_fastapi: FastAPI):
         print(f"ERROR: BigQuery prerequisites not met.")
         config.bigquery_client = None
         
+    # NEW: Add Looker SDK initialization block
     try:
         print("INFO: Initializing Looker SDK from environment variables...")
         looker_client_id = os.getenv("LOOKER_API_CLIENT_ID")
         looker_client_secret = os.getenv("LOOKER_API_CLIENT_SECRET")
         looker_base_url = os.getenv("LOOKER_INSTANCE_URL")
 
-        if not looker_client_id or not looker_client_secret:
-            raise ValueError("LOOKER_API_CLIENT_ID and LOOKER_API_CLIENT_SECRET environment variables must be set.")
+        if not looker_client_id or not looker_client_secret or not looker_base_url:
+            raise ValueError("LOOKER_API_CLIENT_ID, LOOKER_API_CLIENT_SECRET, and LOOKER_INSTANCE_URL environment variables must be set.")
         
         looker_api_url = f"{looker_base_url.rstrip('/')}:19999"
         
@@ -301,11 +322,12 @@ def get_vertex_ai_initialized_flag():
     if not config.vertex_ai_initialized: raise HTTPException(status_code=503, detail="Vertex AI SDK not initialized.")
     if not config.TARGET_GEMINI_MODEL: raise HTTPException(status_code=503, detail="TARGET_GEMINI_MODEL not configured.")
 
+# NEW: Add Looker SDK dependency getter
 def get_looker_sdk_client_dep():
     if not config.looker_sdk_client:
         raise HTTPException(status_code=503, detail="Looker SDK client not available.")
     return config.looker_sdk_client
-
+    
 def remove_first_and_last_lines(s: str) -> str:
     if not s: return ""
     lines = s.splitlines();
@@ -404,8 +426,7 @@ def format_value(value: Any, format_str: Optional[str], field_type_str: str) -> 
     field_type_upper = str(field_type_str).upper() if field_type_str else "UNKNOWN"
     if format_str and field_type_upper in NUMERIC_TYPES_FOR_AGG:
         try:
-            str_value = str(value) if not isinstance(value, (int, float, Decimal)) else value
-            num_value = Decimal(str_value)
+            str_value = str(value) if not isinstance(value, (int, float, Decimal)) else value; num_value = Decimal(str_value)
             if format_str == 'INTEGER': return f"{num_value:,.0f}"
             elif format_str == 'DECIMAL_2': return f"{num_value:,.2f}"
             elif format_str == 'USD': return f"${num_value:,.2f}"
@@ -504,7 +525,8 @@ async def discover_template_placeholders(
     discovered_placeholders_list: List[DiscoveredPlaceholderInfo] = []
     placeholder_keys_found = set(re.findall(r"\{\{([^{}]+?)\}\}", html_content, re.DOTALL))
     for key_in_tag_raw in placeholder_keys_found:
-        key_in_tag_content = key_in_tag_raw.strip(); original_full_tag = f"{{{{{key_in_tag_content}}}}}"
+        key_in_tag_content = key_in_tag_raw.strip()
+        original_full_tag = f"{{{{{key_in_tag_content}}}}}"
         if not key_in_tag_content: continue
         status = "unrecognized"; suggestion = None
         if key_in_tag_content == "TABLE_ROWS_HTML_PLACEHOLDER":
@@ -544,7 +566,7 @@ async def upsert_report_definition(
         dry_run_job = bq_client.query(base_sql_query, job_config=dry_run_job_config)
         if dry_run_job.schema:
             for field in dry_run_job.schema:
-                field_data = {"name": field.name, "type": str(field.field_type).upper(), "mode": str(f.mode).upper()}
+                field_data = {"name": field.name, "type": str(field.field_type).upper(), "mode": str(field.mode).upper()}
                 schema_from_dry_run_list.append(field_data); schema_map_for_prompt[field.name] = field_data["type"]
             schema_for_gemini_prompt_str = "Schema: " + ", ".join([f"`{f['name']}` (Type: {f['type']})" for f in schema_from_dry_run_list])
         else: schema_for_gemini_prompt_str = "Schema: Not determined."
@@ -574,7 +596,8 @@ async def upsert_report_definition(
         if top_fields_prompt_parts: prompt_for_template += "\nTop Fields:\n" + "\n".join(top_fields_prompt_parts)
         if header_fields_prompt_parts: prompt_for_template += "\nHeader Fields:\n" + "\n".join(header_fields_prompt_parts)
         prompt_for_template += "\n--- End Field Instructions ---"
-    
+
+    # NEW: Add Look placeholders to prompt
     if payload.look_configs:
         prompt_for_template += "\n\n--- Chart Image Placeholders ---\nPlease include placeholders for the following charts where you see fit in the layout. Use these exact placeholder names:\n"
         for look_config in payload.look_configs:
@@ -587,7 +610,7 @@ async def upsert_report_definition(
             value_descs = [f"{cv.calculation_type.value} of '{cv.target_field_name}'" for cv in calc_row_config.calculated_values]
             prompt_for_template += f"\n- Row {i+1}: Label \"{calc_row_config.row_label}\", Placeholder `{{{{{calc_row_config.values_placeholder_name}}}}}` for: {'; '.join(value_descs)}."
         prompt_for_template += "\n--- End Explicit Calculation Rows ---"
-    prompt_for_template += """\n\n--- HTML Template Generation Guidelines (Final Reminder) ---\n1. Output ONLY the raw HTML code. No descriptions, no explanations, no markdown like ```html ... ```.\n2. Start with `<!DOCTYPE html>` or `<html>` and end with `</html>`.\n3. CRITICAL: ALL placeholders for dynamic data MUST use double curly braces, e.g., `{{YourPlaceholderKey}}`. Single braces (e.g., `{YourPlaceholderKey}`) are NOT PERMITTED and will not be processed."""
+    prompt_for_template += """\n\n--- HTML Template Generation Guidelines (Final Reminder) ---\n1. Output ONLY the raw HTML code. No descriptions, no explanations, no markdown like ```html ... ```.\n2. Start with `<!DOCTYPE html>` or `<html>` and end with `</html>`.\n3. CRITICAL: ALL placeholders for dynamic data MUST use double curly braces, e.g., `{{YourPlaceholderKey}}`. Single braces (e.g., {YourPlaceholderKey}) are NOT PERMITTED and will not be processed."""
 
     try:
         async with httpx.AsyncClient(timeout=180.0) as client_httpx:
@@ -619,6 +642,7 @@ async def upsert_report_definition(
     calculation_row_configs_json_to_save = json.dumps([crc.model_dump(exclude_unset=True) for crc in payload.calculation_row_configs], indent=2) if payload.calculation_row_configs else "[]"
     subtotal_configs_json_to_save = json.dumps(payload.subtotal_configs or [], indent=2)
     user_placeholder_mappings_json_to_save = "[]"
+    # NEW: Save look configs
     look_configs_json_to_save = json.dumps([lc.model_dump() for lc in payload.look_configs], indent=2) if payload.look_configs else "[]"
 
     try:
@@ -636,15 +660,15 @@ async def upsert_report_definition(
     merge_sql = f"""
     MERGE {table_id} T USING (
         SELECT @report_name AS ReportName, @prompt AS Prompt, @sql_query AS SQL, @image_url AS ScreenshotURL,
-               @look_configs_json AS LookConfigsJSON,
-               @template_gcs_path AS TemplateURL, @latest_template_version AS LatestTemplateVersion,
-               @base_sql_gcs_path AS BaseQueryGCSPath, @schema_gcs_path AS SchemaGCSPath,
-               @schema_json AS BaseQuerySchemaJSON, @field_display_configs_json AS FieldDisplayConfigsJSON,
-               @calculation_row_configs_json AS CalculationRowConfigsJSON,
-               @subtotal_configs_json AS SubtotalConfigsJSON, @user_placeholder_mappings_json AS UserPlaceholderMappingsJSON,
-               @user_attribute_mappings_json AS UserAttributeMappingsJSON,
-               @optimized_prompt AS OptimizedPrompt, @header_text AS Header, @footer_text AS Footer,
-               CURRENT_TIMESTAMP() AS CurrentTs
+                @look_configs_json AS LookConfigsJSON,
+                @template_gcs_path AS TemplateURL, @latest_template_version AS LatestTemplateVersion,
+                @base_sql_gcs_path AS BaseQueryGCSPath, @schema_gcs_path AS SchemaGCSPath,
+                @schema_json AS BaseQuerySchemaJSON, @field_display_configs_json AS FieldDisplayConfigsJSON,
+                @calculation_row_configs_json AS CalculationRowConfigsJSON,
+                @subtotal_configs_json AS SubtotalConfigsJSON, @user_placeholder_mappings_json AS UserPlaceholderMappingsJSON,
+                @user_attribute_mappings_json AS UserAttributeMappingsJSON,
+                @optimized_prompt AS OptimizedPrompt, @header_text AS Header, @footer_text AS Footer,
+                CURRENT_TIMESTAMP() AS CurrentTs
     ) S ON T.ReportName = S.ReportName
     WHEN MATCHED THEN UPDATE SET
             Prompt = S.Prompt, SQL = S.SQL, ScreenshotURL = S.ScreenshotURL, LookConfigsJSON = S.LookConfigsJSON,
@@ -697,19 +721,17 @@ async def upsert_report_definition(
 @app.get("/report_definitions", response_model=List[ReportDefinitionListItem])
 async def list_report_definitions_endpoint(bq_client: bigquery.Client = Depends(get_bigquery_client_dep)):
     query = f"""
-        SELECT 
-            ReportName, Prompt, SQL, ScreenshotURL, LookConfigsJSON, TemplateURL, 
-            LatestTemplateVersion, BaseQuerySchemaJSON, FieldDisplayConfigsJSON, 
-            CalculationRowConfigsJSON, SubtotalConfigsJSON, UserPlaceholderMappingsJSON, 
-            UserAttributeMappingsJSON, LastGeneratedTimestamp 
-        FROM `{config.gcp_project_id}.report_printing.report_list` 
-        ORDER BY ReportName ASC
+        SELECT ReportName, Prompt, SQL, ScreenshotURL, LookConfigsJSON, TemplateURL, 
+               LatestTemplateVersion, BaseQuerySchemaJSON, FieldDisplayConfigsJSON, 
+               CalculationRowConfigsJSON, SubtotalConfigsJSON, UserPlaceholderMappingsJSON, 
+               UserAttributeMappingsJSON, LastGeneratedTimestamp 
+        FROM `{config.gcp_project_id}.report_printing.report_list` ORDER BY ReportName ASC
     """
     try:
         results = list(bq_client.query(query).result())
         processed_results = []
         for row_dict_item in [dict(row.items()) for row in results]:
-            for json_field in ['BaseQuerySchemaJSON', 'FieldDisplayConfigsJSON', 'CalculationRowConfigsJSON', 'SubtotalConfigsJSON', 'UserAttributeMappingsJSON', 'UserPlaceholderMappingsJSON', 'LookConfigsJSON']:
+            for json_field in ['LookConfigsJSON', 'BaseQuerySchemaJSON', 'FieldDisplayConfigsJSON', 'CalculationRowConfigsJSON', 'SubtotalConfigsJSON', 'UserAttributeMappingsJSON', 'UserPlaceholderMappingsJSON']:
                 if row_dict_item.get(json_field) is None:
                     row_dict_item[json_field] = "{}" if json_field == 'UserAttributeMappingsJSON' else "[]"
             if row_dict_item.get("LatestTemplateVersion") is None:
@@ -719,10 +741,10 @@ async def list_report_definitions_endpoint(bq_client: bigquery.Client = Depends(
         return processed_results
     except Exception as e: print(f"ERROR fetching report definitions: {e}"); raise HTTPException(status_code=500, detail=f"Failed to fetch report definitions: {str(e)}")
 
-
 @app.post("/report_definitions/{report_name}/finalize_template", status_code=200)
 async def finalize_template_with_mappings(
-    report_name: str, payload: FinalizeTemplatePayload,
+    report_name: str,
+    payload: FinalizeTemplatePayload,
     gcs_client: storage.Client = Depends(get_storage_client_dep),
     bq_client: bigquery.Client = Depends(get_bigquery_client_dep)
 ):
@@ -886,6 +908,7 @@ async def execute_report_and_get_url(
     payload: ExecuteReportPayload,
     bq_client: bigquery.Client = Depends(get_bigquery_client_dep),
     gcs_client: storage.Client = Depends(get_storage_client_dep),
+    # NEW: Add Looker SDK dependency
     looker_sdk: methods40.Looker40SDK = Depends(get_looker_sdk_client_dep)
 ):
     report_definition_name = payload.report_definition_name
@@ -894,8 +917,8 @@ async def execute_report_and_get_url(
 
     query_def_sql_exec = f"""
         SELECT SQL, TemplateURL, UserAttributeMappingsJSON, BaseQuerySchemaJSON,
-               FieldDisplayConfigsJSON, CalculationRowConfigsJSON, UserPlaceholderMappingsJSON,
-               LookConfigsJSON
+                FieldDisplayConfigsJSON, CalculationRowConfigsJSON, UserPlaceholderMappingsJSON,
+                LookConfigsJSON
         FROM `{config.gcp_project_id}.report_printing.report_list` WHERE ReportName = @report_name_param
     """
     def_params_exec = [ScalarQueryParameter("report_name_param", "STRING", report_definition_name)]
@@ -907,6 +930,7 @@ async def execute_report_and_get_url(
         user_attr_map_json = row_exec.get("UserAttributeMappingsJSON"); bq_schema_json = row_exec.get("BaseQuerySchemaJSON")
         field_configs_json = row_exec.get("FieldDisplayConfigsJSON"); calculation_row_configs_json = row_exec.get("CalculationRowConfigsJSON")
         user_placeholder_mappings_json = row_exec.get("UserPlaceholderMappingsJSON")
+        # NEW: Fetch LookConfigsJSON
         look_configs_json = row_exec.get("LookConfigsJSON")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching report definition '{report_definition_name}': {str(e)}")
@@ -917,7 +941,7 @@ async def execute_report_and_get_url(
             mappings_list = json.loads(user_placeholder_mappings_json)
             for mapping_data in mappings_list:
                 if isinstance(mapping_data, dict) and 'original_tag' in mapping_data:
-                     user_mappings_dict[mapping_data['original_tag']] = PlaceholderUserMapping(**mapping_data)
+                    user_mappings_dict[mapping_data['original_tag']] = PlaceholderUserMapping(**mapping_data)
         except (json.JSONDecodeError, TypeError) as e:
             print(f"WARN: Could not parse UserPlaceholderMappingsJSON for '{report_definition_name}': {e}")
 
@@ -977,7 +1001,7 @@ async def execute_report_and_get_url(
                             current_conditions_exec.append(f"`{bq_col}` BETWEEN @{p1_n} AND @{p2_n}")
                             current_query_params_for_bq_exec.extend([ScalarQueryParameter(p1_n, act_t, v1), ScalarQueryParameter(p2_n, act_t, v2)])
                     elif op_conf["op"] == "IN":
-                         if isinstance(val_rng, list) and val_rng:
+                        if isinstance(val_rng, list) and val_rng:
                             el_type = bq_type_rng; current_conditions_exec.append(f"`{bq_col}` IN UNNEST(@{p_name})")
                             current_query_params_for_bq_exec.append(ArrayQueryParameter(p_name, el_type, val_rng))
                     else:
@@ -1016,11 +1040,155 @@ async def execute_report_and_get_url(
         html_template_content = blob.download_as_text(encoding='utf-8')
     except Exception as e: raise HTTPException(status_code=500, detail=f"Failed to load HTML template: {str(e)}")
 
+    # --- THIS IS THE CORRECT, PROVEN LOGIC FROM YOUR WORKING VERSION ---
     populated_html = html_template_content
-    # --- (Full data injection logic with subtotals, grand totals, etc. goes here) ---
-    # ... (This logic is very long and should be copied from your last working version) ...
+    table_rows_html_str = ""
+    body_field_names_in_order = [f_n for f_n in schema_fields_ordered if field_configs_map.get(f_n, FieldDisplayConfig(field_name=f_n)).include_in_body]
+    if not body_field_names_in_order and data_rows_list: body_field_names_in_order = list(data_rows_list[0].keys())
+
+    grand_total_accumulators_exec = {f_n: {"values": [], "config": f_c} for f_n, f_c in field_configs_map.items() if f_n in body_field_names_in_order and f_c.numeric_aggregation and schema_type_map.get(f_n) in NUMERIC_TYPES_FOR_AGG}
+    needs_grand_total_row_processing = any((fc.group_summary_action in ['GRAND_TOTAL_ONLY', 'SUBTOTAL_AND_GRAND_TOTAL']) or (fc.numeric_aggregation and fc.field_name in body_field_names_in_order and schema_type_map.get(fc.field_name) in NUMERIC_TYPES_FOR_AGG) for fc_name, fc in field_configs_map.items() if fc)
+    current_group_values = {field_name: None for field_name in subtotal_trigger_fields}
+    current_group_rows_for_subtotal_calc = []
+
+    if data_rows_list:
+        for i_row, row_data in enumerate(data_rows_list):
+            group_break_occurred = False
+            break_level = -1
+            if subtotal_trigger_fields:
+                for group_field_name_idx, group_field_name in enumerate(subtotal_trigger_fields):
+                    new_group_value = row_data.get(group_field_name)
+                    if current_group_values[group_field_name] is not None and new_group_value != current_group_values[group_field_name]:
+                        group_break_occurred = True
+                        break_level = group_field_name_idx
+                        break
+                if group_break_occurred and current_group_rows_for_subtotal_calc:
+                    group_label_parts = [f"{fn.replace('_', ' ').title()}: {current_group_values[fn]}" for fn_idx, fn in enumerate(subtotal_trigger_fields) if current_group_values[fn] is not None and fn_idx <= break_level]
+                    subtotal_html = "<tr class='subtotal-row' style='font-weight:bold; background-color:#f0f0f0;'>\n"
+                    subtotal_html += f"  <td style='padding-left: {10 + break_level * 10}px;' colspan='1'>Subtotal ({', '.join(group_label_parts)}):</td>\n"
+                    first_data_col_index_for_subtotal_values = 1
+                    for header_key_idx, header_key in enumerate(body_field_names_in_order):
+                        if header_key_idx < first_data_col_index_for_subtotal_values: continue
+                        field_config = field_configs_map.get(header_key)
+                        if field_config and field_config.numeric_aggregation and schema_type_map.get(header_key) in NUMERIC_TYPES_FOR_AGG:
+                            group_numeric_vals = [Decimal(str(g_r.get(header_key))) for g_r in current_group_rows_for_subtotal_calc if g_r.get(header_key) is not None and str(g_r.get(header_key)).replace('.','',1).replace('-','',1).isdigit()]
+                            agg_val = calculate_aggregate(group_numeric_vals, field_config.numeric_aggregation)
+                            fmt_val = format_value(agg_val, field_config.number_format, schema_type_map.get(header_key))
+                            align = field_config.alignment or ('right' if schema_type_map.get(header_key) in NUMERIC_TYPES_FOR_AGG else 'left')
+                            subtotal_html += f"  <td style='text-align: {align};'>{fmt_val}</td>\n"
+                        else: subtotal_html += "  <td></td>\n"
+                    subtotal_html += "</tr>\n"; table_rows_html_str += subtotal_html
+                    current_group_rows_for_subtotal_calc = []
+                    for j in range(break_level, len(subtotal_trigger_fields)):
+                        current_group_values[subtotal_trigger_fields[j]] = None
+            if subtotal_trigger_fields:
+                for group_field_name in subtotal_trigger_fields: current_group_values[group_field_name] = row_data.get(group_field_name)
+                current_group_rows_for_subtotal_calc.append(row_data)
+
+            row_html_item = "<tr>\n"
+            for idx_hk, header_key in enumerate(body_field_names_in_order):
+                cell_value = row_data.get(header_key); field_config = field_configs_map.get(header_key); field_type = schema_type_map.get(header_key, "STRING")
+                display_value = True
+                is_grouping_field_for_display = header_key in subtotal_trigger_fields
+                if is_grouping_field_for_display:
+                    field_config_for_group_by_display = field_configs_map.get(header_key)
+                    # Corrected logic for 'SHOW_ON_CHANGE' to 'SUPPRESS' from the working model
+                    if field_config_for_group_by_display and field_config_for_group_by_display.repeat_group_value == 'SUPPRESS':
+                        if i_row > 0:
+                            same_as_prev_for_this_and_higher_levels = True
+                            current_group_field_level_for_display = subtotal_trigger_fields.index(header_key)
+                            for k_level_check in range(current_group_field_level_for_display + 1):
+                                check_field = subtotal_trigger_fields[k_level_check]
+                                if row_data.get(check_field) != data_rows_list[i_row-1].get(check_field):
+                                    same_as_prev_for_this_and_higher_levels = False; break
+                            if same_as_prev_for_this_and_higher_levels: display_value = False
+                formatted_val = format_value(cell_value, field_config.number_format if field_config else None, field_type) if display_value else ""
+                default_align = "left"; align_style_str = ""
+                if field_type in NUMERIC_TYPES_FOR_AGG : default_align = "right"
+                align_val = (field_config.alignment if field_config else None) or default_align
+                indent_px = 0
+                if is_grouping_field_for_display:
+                    try: level = subtotal_trigger_fields.index(header_key); indent_px = 10 + level * 15
+                    except ValueError: pass
+                align_style_parts = []
+                if indent_px > 0: align_style_parts.append(f"padding-left: {indent_px}px;")
+                if align_val: align_style_parts.append(f"text-align: {align_val};")
+                if align_style_parts: align_style_str = f"style='{' '.join(align_style_parts)}'"
+                row_html_item += f"  <td {align_style_str}>{formatted_val}</td>\n"
+                if header_key in grand_total_accumulators_exec and cell_value is not None:
+                    try: grand_total_accumulators_exec[header_key]["values"].append(Decimal(str(cell_value)))
+                    except: pass
+            row_html_item += "</tr>\n"; table_rows_html_str += row_html_item
+        if subtotal_trigger_fields and current_group_rows_for_subtotal_calc:
+            group_label_parts = [f"{fn.replace('_', ' ').title()}: {current_group_values[fn]}" for fn in subtotal_trigger_fields if current_group_values[fn] is not None]
+            subtotal_html = "<tr class='subtotal-row' style='font-weight:bold; background-color:#f0f0f0;'>\n"
+            last_group_level = len(subtotal_trigger_fields) -1 if subtotal_trigger_fields else 0
+            subtotal_html += f"  <td style='padding-left: {10 + last_group_level * 10}px;' colspan='1'>Subtotal ({', '.join(group_label_parts)}):</td>\n"
+            first_data_col_index_for_subtotal_values = 1
+            for header_key_idx, header_key in enumerate(body_field_names_in_order):
+                if header_key_idx < first_data_col_index_for_subtotal_values: continue
+                field_config = field_configs_map.get(header_key)
+                if field_config and field_config.numeric_aggregation and schema_type_map.get(header_key) in NUMERIC_TYPES_FOR_AGG:
+                    group_numeric_vals = [Decimal(str(g_r.get(header_key))) for g_r in current_group_rows_for_subtotal_calc if g_r.get(header_key) is not None and str(g_r.get(header_key)).replace('.','',1).replace('-','',1).isdigit()]
+                    agg_val = calculate_aggregate(group_numeric_vals, field_config.numeric_aggregation)
+                    fmt_val = format_value(agg_val, field_config.number_format, schema_type_map.get(header_key))
+                    align = field_config.alignment or ('right' if schema_type_map.get(header_key) in NUMERIC_TYPES_FOR_AGG else 'left')
+                    subtotal_html += f"  <td style='text-align: {align};'>{fmt_val}</td>\n"
+                else: subtotal_html += "  <td></td>\n"
+            subtotal_html += "</tr>\n"; table_rows_html_str += subtotal_html
+        if needs_grand_total_row_processing:
+            gt_html = "<tr class='grand-total-row' style='font-weight:bold; background-color:#e0e0e0; border-top: 2px solid #aaa;'>\n  <td style='padding-left: 10px;' colspan='1'>Grand Total:</td>\n"
+            first_data_col_index_for_gt_values = 1
+            for header_key_idx, header_key in enumerate(body_field_names_in_order):
+                if header_key_idx < first_data_col_index_for_gt_values: continue
+                if header_key in grand_total_accumulators_exec:
+                    acc = grand_total_accumulators_exec[header_key]
+                    agg_val = calculate_aggregate(acc["values"], acc["config"].numeric_aggregation)
+                    fmt_val = format_value(agg_val, acc["config"].number_format, schema_type_map.get(header_key))
+                    align = acc["config"].alignment or ('right' if schema_type_map.get(header_key) in NUMERIC_TYPES_FOR_AGG else 'left')
+                    gt_html += f"  <td style='text-align: {align};'>{fmt_val}</td>\n"
+                else: gt_html += "  <td></td>\n"
+            gt_html += "</tr>\n"; table_rows_html_str += gt_html
+    elif not data_rows_list:
+        colspan = len(body_field_names_in_order) if body_field_names_in_order else 1
+        table_rows_html_str = f"<tr><td colspan='{colspan}' style='text-align:center; padding: 20px;'>No data found for the selected criteria.</td></tr>"
+    populated_html = populated_html.replace("{{TABLE_ROWS_HTML_PLACEHOLDER}}", table_rows_html_str)
+
+    if parsed_calculation_row_configs:
+        for calc_row_conf_item in parsed_calculation_row_configs:
+            calculated_row_html_cells = ""
+            for val_conf_item in calc_row_conf_item.calculated_values:
+                numeric_col_data_calc = [Decimal(str(rd.get(val_conf_item.target_field_name))) for rd in data_rows_list if rd.get(val_conf_item.target_field_name) is not None and str(rd.get(val_conf_item.target_field_name)).replace('.','',1).replace('-','',1).isdigit()]
+                calculated_result_expl = calculate_aggregate(numeric_col_data_calc, val_conf_item.calculation_type.value)
+                field_type_calc_expl = schema_type_map.get(val_conf_item.target_field_name, "STRING")
+                num_fmt_calc_expl = val_conf_item.number_format if val_conf_item.calculation_type not in [CalculationType.COUNT, CalculationType.COUNT_DISTINCT] else 'INTEGER'
+                formatted_calc_value_expl = format_value(calculated_result_expl, num_fmt_calc_expl, field_type_calc_expl)
+                align_style_calc_expl = (val_conf_item.alignment if val_conf_item.alignment else ("right" if field_type_calc_expl in NUMERIC_TYPES_FOR_AGG else "left"))
+                calculated_row_html_cells += f"<td style='text-align: {align_style_calc_expl};'>{formatted_calc_value_expl}</td>\n"
+            populated_html = populated_html.replace(f"{{{{{calc_row_conf_item.values_placeholder_name}}}}}", calculated_row_html_cells)
+
+    for fc_name, fc_config_obj_ph_final in field_configs_map.items():
+        val_fmt_ph_final = ""
+        if fc_config_obj_ph_final.include_at_top or fc_config_obj_ph_final.include_in_header:
+            raw_val_ph_final = None
+            if fc_name in applied_filter_values_for_template_exec:
+                raw_val_ph_final = applied_filter_values_for_template_exec[fc_name]
+            elif data_rows_list and fc_name in data_rows_list[0]:
+                raw_val_ph_final = data_rows_list[0][fc_name]
+            val_fmt_ph_final = format_value(raw_val_ph_final, fc_config_obj_ph_final.number_format, schema_type_map.get(fc_name, "STRING"))
+            if not val_fmt_ph_final:
+                target_tag = f"{{{{TOP_{fc_name}}}}}" if fc_config_obj_ph_final.include_at_top else f"{{{{HEADER_{fc_name}}}}}"
+                mapping_info = user_mappings_dict.get(target_tag)
+                if mapping_info and mapping_info.fallback_value:
+                    val_fmt_ph_final = mapping_info.fallback_value
+        if fc_config_obj_ph_final.include_at_top:
+            populated_html = populated_html.replace(f"{{{{TOP_{fc_name}}}}}", val_fmt_ph_final or "")
+        if fc_config_obj_ph_final.include_in_header:
+            populated_html = populated_html.replace(f"{{{{HEADER_{fc_name}}}}}", val_fmt_ph_final or "")
+
+    # --- END OF PROVEN DATA LOGIC ---
     
-    # NEW: Loop through Look configs and embed images
+    # NEW: Add Look rendering logic AFTER data has been populated
     look_configs: List[LookConfig] = []
     if look_configs_json:
         try: look_configs = [LookConfig(**item) for item in json.loads(look_configs_json)]
@@ -1031,26 +1199,20 @@ async def execute_report_and_get_url(
         print(f"INFO: Rendering {len(look_configs)} Look(s) as PNGs from Looker.")
         for look_config in look_configs:
             try:
-                print(f" - Rendering Look ID {look_config.look_id} for placeholder {{{{look_config.placeholder_name}}}}")
-                image_bytes = looker_sdk.run_look(
-                    look_id=str(look_config.look_id),
-                    result_format="png"
-                )
-                
+                print(f" - Rendering Look ID {look_config.look_id} for placeholder {{{{{look_config.placeholder_name}}}}}")
+                image_bytes = looker_sdk.run_look(look_id=str(look_config.look_id), result_format="png")
                 base64_image = base64.b64encode(image_bytes).decode('utf-8')
                 image_src_string = f"data:image/png;base64,{base64_image}"
                 img_tag = f'<img src="{image_src_string}" alt="Chart from Look {look_config.look_id}" style="width:100%; height:auto; border: 1px solid #ccc;" />'
-                
                 placeholder_to_replace = f"{{{{{look_config.placeholder_name}}}}}"
                 populated_html = populated_html.replace(placeholder_to_replace, img_tag)
-
             except Exception as e:
                 print(f"ERROR: Failed to render Look {look_config.look_id} from Looker API: {e}")
                 error_img_tag = f'<div style="border:2px dashed red; padding:20px; text-align:center;">Error: Could not load chart from Look ID {look_config.look_id}.<br/><small>{str(e)}</small></div>'
                 placeholder_to_replace = f"{{{{{look_config.placeholder_name}}}}}"
                 populated_html = populated_html.replace(placeholder_to_replace, error_img_tag)
 
-    # --- (Final report upload to temporary GCS path and returning URL) ---
+
     report_id = str(uuid.uuid4())
     generated_report_gcs_blob_name = f"{config.GCS_GENERATED_REPORTS_PREFIX}{report_id}.html"
     try:
