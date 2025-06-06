@@ -25,9 +25,7 @@ import vertexai
 from vertexai.generative_models import GenerativeModel, Part, Image
 from vertexai.generative_models import HarmCategory, HarmBlockThreshold, GenerationConfig
 
-import looker_sdk  # <-- THIS LINE IS MOST LIKELY MISSING
-
-# NEW: Import Looker SDK
+import looker_sdk
 from looker_sdk import methods40, models40
 
 # --- AppConfig & Global Configs ---
@@ -38,7 +36,6 @@ class AppConfig:
     vertex_ai_initialized: bool = False
     bigquery_client: Union[bigquery.Client, None] = None
     storage_client: Union[storage.Client, None] = None
-    # NEW: Add Looker SDK client to config
     looker_sdk_client: Union[methods40.Looker40SDK, None] = None
     GCS_BUCKET_NAME: str = os.getenv("GCS_BUCKET_NAME", "")
     GCS_SYSTEM_INSTRUCTION_PATH: str = os.getenv("GCS_SYSTEM_INSTRUCTION_PATH", "system_instructions/default_system_instruction.txt")
@@ -105,7 +102,6 @@ Custom Calculation Row: `<tr><td>Totals:</td>{{MyOverallTotals}}</tr>`
 """
 
 # --- Pydantic Models ---
-# NEW: Add LookConfig
 class LookConfig(BaseModel):
     look_id: int
     placeholder_name: str
@@ -127,7 +123,6 @@ class FieldDisplayConfig(BaseModel):
     numeric_aggregation: Optional[str] = None
 class ReportDefinitionPayload(BaseModel):
     report_name: str; image_url: str; sql_query: str; prompt: str
-    # NEW: Add look_configs
     look_configs: Optional[List[LookConfig]] = None
     field_display_configs: Optional[List[FieldDisplayConfig]] = None
     user_attribute_mappings: Optional[Dict[str, str]] = Field(default_factory=dict)
@@ -138,7 +133,6 @@ class ExecuteReportPayload(BaseModel):
     report_definition_name: str; filter_criteria_json: str = Field(default="{}")
 class ReportDefinitionListItem(BaseModel):
     ReportName: str; Prompt: Optional[str] = None; SQL: Optional[str] = None; ScreenshotURL: Optional[str] = None
-    # NEW: Add LookConfigsJSON
     LookConfigsJSON: Optional[str] = None
     TemplateURL: Optional[str] = None; LatestTemplateVersion: Optional[int] = None
     BaseQuerySchemaJSON: Optional[str] = None
@@ -251,14 +245,9 @@ async def lifespan(app_fastapi: FastAPI):
         print(f"ERROR: BigQuery prerequisites not met.")
         config.bigquery_client = None
         
-    # NEW: Add Looker SDK initialization block
     try:
         print("INFO: Initializing Looker SDK from standard environment variables...")
-        
-        # The SDK will find LOOKERSDK_BASE_URL, LOOKERSDK_CLIENT_ID, etc.
-        # on its own. We don't need to manually check for them.
         config.looker_sdk_client = looker_sdk.init40()
-        
         print("INFO: Looker SDK initialized successfully.")
     except Exception as e:
         print(f"FATAL: Looker SDK auto-initialization from environment failed: {e}")
@@ -311,10 +300,21 @@ def get_vertex_ai_initialized_flag():
     if not config.vertex_ai_initialized: raise HTTPException(status_code=503, detail="Vertex AI SDK not initialized.")
     if not config.TARGET_GEMINI_MODEL: raise HTTPException(status_code=503, detail="TARGET_GEMINI_MODEL not configured.")
 
-# NEW: Add Looker SDK dependency getter
+_looker_sdk_authenticated = False
 def get_looker_sdk_client_dep():
+    global _looker_sdk_authenticated
     if not config.looker_sdk_client:
-        raise HTTPException(status_code=503, detail="Looker SDK client not available.")
+        raise HTTPException(status_code=503, detail="Looker SDK is not configured. Check environment variables.")
+    
+    if not _looker_sdk_authenticated:
+        try:
+            me = config.looker_sdk_client.me()
+            print(f"INFO: Looker SDK connection verified for user: {me.display_name}")
+            _looker_sdk_authenticated = True
+        except Exception as e:
+            print(f"ERROR: Looker SDK authentication failed: {e}")
+            raise HTTPException(status_code=503, detail=f"Looker SDK authentication failed: {e}")
+            
     return config.looker_sdk_client
     
 def remove_first_and_last_lines(s: str) -> str:
@@ -444,12 +444,12 @@ def calculate_aggregate(data_list: List[Decimal], agg_type_str_param: Optional[s
 
 # --- API Endpoints ---
 @app.get("/")
-async def read_root(request: Request):
+async def read_root():
     return {"status": f"GenAI Report API is running! (Target Model: {config.TARGET_GEMINI_MODEL})"}
 
 @app.post("/dry_run_sql_for_schema")
 async def dry_run_sql_for_schema_endpoint(
-    request: Request, payload: SqlQueryPayload, bq_client: bigquery.Client = Depends(get_bigquery_client_dep)
+    payload: SqlQueryPayload, bq_client: bigquery.Client = Depends(get_bigquery_client_dep)
 ):
     try:
         job_config = bigquery.QueryJobConfig(dry_run=True, use_query_cache=False)
@@ -479,7 +479,7 @@ async def update_system_instruction_endpoint(
 
 @app.get("/report_definitions/{report_name}/discover_placeholders", response_model=DiscoverPlaceholdersResponse)
 async def discover_template_placeholders(
-    report_name: str, request: Request,
+    report_name: str,
     gcs_client: storage.Client = Depends(get_storage_client_dep),
     bq_client: bigquery.Client = Depends(get_bigquery_client_dep)
 ):
@@ -586,7 +586,6 @@ async def upsert_report_definition(
         if header_fields_prompt_parts: prompt_for_template += "\nHeader Fields:\n" + "\n".join(header_fields_prompt_parts)
         prompt_for_template += "\n--- End Field Instructions ---"
 
-    # NEW: Add Look placeholders to prompt
     if payload.look_configs:
         prompt_for_template += "\n\n--- Chart Image Placeholders ---\nPlease include placeholders for the following charts where you see fit in the layout. Use these exact placeholder names:\n"
         for look_config in payload.look_configs:
@@ -631,7 +630,6 @@ async def upsert_report_definition(
     calculation_row_configs_json_to_save = json.dumps([crc.model_dump(exclude_unset=True) for crc in payload.calculation_row_configs], indent=2) if payload.calculation_row_configs else "[]"
     subtotal_configs_json_to_save = json.dumps(payload.subtotal_configs or [], indent=2)
     user_placeholder_mappings_json_to_save = "[]"
-    # NEW: Save look configs
     look_configs_json_to_save = json.dumps([lc.model_dump() for lc in payload.look_configs], indent=2) if payload.look_configs else "[]"
 
     try:
@@ -897,7 +895,6 @@ async def execute_report_and_get_url(
     payload: ExecuteReportPayload,
     bq_client: bigquery.Client = Depends(get_bigquery_client_dep),
     gcs_client: storage.Client = Depends(get_storage_client_dep),
-    # NEW: Add Looker SDK dependency
     looker_sdk: methods40.Looker40SDK = Depends(get_looker_sdk_client_dep)
 ):
     report_definition_name = payload.report_definition_name
@@ -915,11 +912,13 @@ async def execute_report_and_get_url(
         results_exec = list(bq_client.query(query_def_sql_exec, job_config=bigquery.QueryJobConfig(query_parameters=def_params_exec)).result())
         if not results_exec: raise HTTPException(status_code=404, detail=f"Report definition '{report_definition_name}' not found.")
         row_exec = results_exec[0]
-        base_sql_query_from_db = row_exec.get("SQL"); html_template_gcs_path = row_exec.get("TemplateURL")
-        user_attr_map_json = row_exec.get("UserAttributeMappingsJSON"); bq_schema_json = row_exec.get("BaseQuerySchemaJSON")
-        field_configs_json = row_exec.get("FieldDisplayConfigsJSON"); calculation_row_configs_json = row_exec.get("CalculationRowConfigsJSON")
+        base_sql_query_from_db = row_exec.get("SQL")
+        html_template_gcs_path = row_exec.get("TemplateURL")
+        user_attr_map_json = row_exec.get("UserAttributeMappingsJSON")
+        bq_schema_json = row_exec.get("BaseQuerySchemaJSON")
+        field_configs_json = row_exec.get("FieldDisplayConfigsJSON")
+        calculation_row_configs_json = row_exec.get("CalculationRowConfigsJSON")
         user_placeholder_mappings_json = row_exec.get("UserPlaceholderMappingsJSON")
-        # NEW: Fetch LookConfigsJSON
         look_configs_json = row_exec.get("LookConfigsJSON")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching report definition '{report_definition_name}': {str(e)}")
@@ -1029,7 +1028,6 @@ async def execute_report_and_get_url(
         html_template_content = blob.download_as_text(encoding='utf-8')
     except Exception as e: raise HTTPException(status_code=500, detail=f"Failed to load HTML template: {str(e)}")
 
-    # --- THIS IS THE CORRECT, PROVEN LOGIC FROM YOUR WORKING VERSION ---
     populated_html = html_template_content
     table_rows_html_str = ""
     body_field_names_in_order = [f_n for f_n in schema_fields_ordered if field_configs_map.get(f_n, FieldDisplayConfig(field_name=f_n)).include_in_body]
@@ -1081,7 +1079,6 @@ async def execute_report_and_get_url(
                 is_grouping_field_for_display = header_key in subtotal_trigger_fields
                 if is_grouping_field_for_display:
                     field_config_for_group_by_display = field_configs_map.get(header_key)
-                    # Corrected logic for 'SHOW_ON_CHANGE' to 'SUPPRESS' from the working model
                     if field_config_for_group_by_display and field_config_for_group_by_display.repeat_group_value == 'SUPPRESS':
                         if i_row > 0:
                             same_as_prev_for_this_and_higher_levels = True
@@ -1141,6 +1138,7 @@ async def execute_report_and_get_url(
     elif not data_rows_list:
         colspan = len(body_field_names_in_order) if body_field_names_in_order else 1
         table_rows_html_str = f"<tr><td colspan='{colspan}' style='text-align:center; padding: 20px;'>No data found for the selected criteria.</td></tr>"
+    
     populated_html = populated_html.replace("{{TABLE_ROWS_HTML_PLACEHOLDER}}", table_rows_html_str)
 
     if parsed_calculation_row_configs:
@@ -1175,9 +1173,6 @@ async def execute_report_and_get_url(
         if fc_config_obj_ph_final.include_in_header:
             populated_html = populated_html.replace(f"{{{{HEADER_{fc_name}}}}}", val_fmt_ph_final or "")
 
-    # --- END OF PROVEN DATA LOGIC ---
-    
-    # NEW: Add Look rendering logic AFTER data has been populated
     look_configs: List[LookConfig] = []
     if look_configs_json:
         try:
@@ -1196,7 +1191,6 @@ async def execute_report_and_get_url(
                 base64_image = base64.b64encode(image_bytes).decode('utf-8')
                 image_src_string = f"data:image/png;base64,{base64_image}"
                 
-                # THIS IS THE CORRECTED LINE - The extra `<img src=` is removed
                 img_tag = f'<img src="{image_src_string}" alt="Chart from Look {look_config.look_id}" style="width:100%; height:auto; border: 1px solid #ccc;" />'
                 
                 populated_html = populated_html.replace(placeholder_to_replace, img_tag)
@@ -1205,8 +1199,7 @@ async def execute_report_and_get_url(
                 print(f"ERROR: Failed to render Look {look_config.look_id} from Looker API: {e}")
                 error_img_tag = f'<div style="border:2px dashed red; padding:20px; text-align:center;">Error: Could not load chart from Look ID {look_config.look_id}.<br/><small>{str(e)}</small></div>'
                 populated_html = populated_html.replace(placeholder_to_replace, error_img_tag)
-
-
+    
     report_id = str(uuid.uuid4())
     generated_report_gcs_blob_name = f"{config.GCS_GENERATED_REPORTS_PREFIX}{report_id}.html"
     try:
