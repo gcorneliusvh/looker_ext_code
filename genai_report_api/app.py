@@ -255,7 +255,8 @@ async def lifespan(app_fastapi: FastAPI):
     try:
         print("INFO: Initializing Looker SDK from standard environment variables...")
         
-        # No arguments are needed! The SDK does the work.
+        # The SDK will find LOOKERSDK_BASE_URL, LOOKERSDK_CLIENT_ID, etc.
+        # on its own. We don't need to manually check for them.
         config.looker_sdk_client = looker_sdk.init40()
         
         print("INFO: Looker SDK initialized successfully.")
