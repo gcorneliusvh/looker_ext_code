@@ -346,6 +346,8 @@ def calculate_aggregate(data_list: List[Decimal], agg_type_str_param: Optional[s
     return Decimal('0')
 
 # --- Background Task Function for Report Generation ---
+# In app.py
+
 def generate_and_save_report_assets(
     payload: ReportDefinitionPayload,
     bq_client: bigquery.Client,
@@ -354,24 +356,53 @@ def generate_and_save_report_assets(
     try:
         report_name = payload.report_name
         print(f"BACKGROUND_TASK: Starting generation for report: '{report_name}'")
-        
-        schema_from_dry_run_list, schema_map_for_prompt = [], {}
-        dry_run_job = bq_client.query(payload.sql_query, job_config=bigquery.QueryJobConfig(dry_run=True, use_query_cache=False))
-        if dry_run_job.schema:
-            for field in dry_run_job.schema:
-                field_data = {"name": field.name, "type": str(field.field_type).upper(), "mode": str(field.mode).upper()}
-                schema_from_dry_run_list.append(field_data)
-                schema_map_for_prompt[field.name] = field_data["type"]
-        schema_for_gemini_prompt_str = "Schema: " + ", ".join([f"`{f['name']}` (Type: {f['type']})" for f in schema_from_dry_run_list])
 
-        effective_field_display_configs = [FieldDisplayConfig(**fc.model_dump(exclude_unset=True)) for fc in payload.field_display_configs] if payload.field_display_configs else [FieldDisplayConfig(field_name=f["name"]) for f in schema_from_dry_run_list]
-        prompt_for_template = payload.prompt + f"\n\n--- Data Schema ---\n{schema_for_gemini_prompt_str}\n--- End Data Schema ---"
-        if effective_field_display_configs:
-            prompt_for_template += "\n\n--- Field Display & Summary Instructions ---"
-            # ... full prompt construction logic ...
+        # --- REFACTORED PROMPT GENERATION FOR MULTIPLE TABLES ---
+        prompt_for_template = payload.prompt
+        all_schemas_for_bq_save = {}
+        
+        # Loop through each data table to perform a dry run and build the prompt
+        for table_config in payload.data_tables:
+            table_placeholder = table_config.table_placeholder_name
+            
+            # Perform a dry run to get the schema for this specific query
+            schema_from_dry_run_list, schema_map_for_prompt = [], {}
+            try:
+                dry_run_job = bq_client.query(table_config.sql_query, job_config=bigquery.QueryJobConfig(dry_run=True, use_query_cache=False))
+                if dry_run_job.schema:
+                    for field in dry_run_job.schema:
+                        field_data = {"name": field.name, "type": str(field.field_type).upper(), "mode": str(field.mode).upper()}
+                        schema_from_dry_run_list.append(field_data)
+                        schema_map_for_prompt[field.name] = field_data["type"]
+                all_schemas_for_bq_save[table_placeholder] = schema_from_dry_run_list
+            except Exception as e:
+                print(f"WARN: Dry run failed for table '{table_placeholder}'. Skipping. Error: {e}")
+                continue # Skip to the next table if one fails
+
+            # Append this table's schema and instructions to the main prompt
+            schema_for_gemini_prompt_str = ", ".join([f"`{f['name']}` (Type: {f['type']})" for f in schema_from_dry_run_list])
+            prompt_for_template += f"\n\n--- Data Table: `{table_placeholder}` ---\n"
+            prompt_for_template += f"Use the exact placeholder `{{{{TABLE_ROWS_{table_placeholder}}}}}` for this table's body rows.\n"
+            prompt_for_template += f"Schema: {schema_for_gemini_prompt_str}\n"
+
+            if table_config.field_display_configs:
+                prompt_for_template += "Field Display & Summary Instructions:\n"
+                for config_item in table_config.field_display_configs:
+                    style_hints = [s for s in [f"align: {config_item.alignment}" if config_item.alignment else "", f"format: {config_item.number_format}" if config_item.number_format else ""] if s]
+                    field_info = f"- `{config_item.field_name}`"
+                    if style_hints: field_info += f" (Styling: {'; '.join(style_hints)})"
+                    # Add other instructions as needed for subtotals, etc.
+                    prompt_for_template += f"{field_info}\n"
+            prompt_for_template += "--- End Data Table ---"
+        # --- END OF REFACTORED PROMPT GENERATION ---
+
         if payload.look_configs:
-            prompt_for_template += "\n\n--- Chart Image Placeholders --- ... \n"
-        prompt_for_template += """\n\n--- HTML Template Generation Guidelines (Final Reminder) ---..."""
+            prompt_for_template += "\n\n--- Chart Image Placeholders ---\nPlease include placeholders for the following charts where you see fit in the layout. Use these exact placeholder names:\n"
+            for look_config in payload.look_configs:
+                prompt_for_template += f"- `{{{{{look_config.placeholder_name}}}}}`\n"
+            prompt_for_template += "--- End Chart Image Placeholders ---"
+        
+        prompt_for_template += """\n\n--- HTML Template Generation Guidelines (Final Reminder) ---\n1. Output ONLY the raw HTML code. No descriptions, no explanations, no markdown like ```html ... ```.\n2. Start with `<!DOCTYPE html>` or `<html>` and end with `</html>`.\n3. CRITICAL: ALL placeholders for dynamic data MUST use double curly braces, e.g., `{{YourPlaceholderKey}}`."""
         
         img_response = httpx.get(payload.image_url, timeout=180.0)
         img_response.raise_for_status()
@@ -388,7 +419,47 @@ def generate_and_save_report_assets(
         bucket = gcs_client.bucket(config.GCS_BUCKET_NAME)
         bucket.blob(versioned_template_gcs_path_str).upload_from_string(html_template_content, content_type='text/html; charset=utf-8')
         
-        # ... Other GCS uploads and BQ MERGE statement ...
+        # --- REFACTORED BIGQUERY SAVE LOGIC ---
+        user_attribute_mappings_json_str = json.dumps(payload.user_attribute_mappings or {})
+        
+        # Convert new data structures to JSON strings to save in BigQuery
+        data_tables_json_to_save = json.dumps([dt.model_dump() for dt in payload.data_tables], indent=2)
+        schema_json_to_save = json.dumps(all_schemas_for_bq_save, indent=2)
+        
+        look_configs_json_to_save = json.dumps([lc.model_dump() for lc in payload.look_configs], indent=2) if payload.look_configs else "[]"
+        calculation_row_configs_json_to_save = json.dumps([crc.model_dump(exclude_unset=True) for crc in payload.calculation_row_configs], indent=2) if payload.calculation_row_configs else "[]"
+        subtotal_configs_json_to_save = json.dumps([stc.model_dump() for stc in payload.subtotal_configs], indent=2) if payload.subtotal_configs else "[]"
+
+        table_id = f"`{config.gcp_project_id}.report_printing.report_list`"
+        # Modified MERGE statement to use new JSON fields
+        merge_sql = f"""
+        MERGE {table_id} T
+        USING (SELECT @report_name AS ReportName) S ON T.ReportName = S.ReportName
+        WHEN NOT MATCHED THEN
+          INSERT (ReportName, Prompt, SQL, ScreenshotURL, LookConfigsJSON, TemplateURL, LatestTemplateVersion, BaseQuerySchemaJSON, FieldDisplayConfigsJSON, CalculationRowConfigsJSON, SubtotalConfigsJSON, UserAttributeMappingsJSON, CreatedTimestamp, LastGeneratedTimestamp)
+          VALUES(@report_name, @prompt, @data_tables_json, @image_url, @look_configs_json, @template_gcs_path, 1, @schema_json, @field_display_configs_json, @calculation_row_configs_json, @subtotal_configs_json, @user_attribute_mappings_json, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP())
+        WHEN MATCHED THEN
+          UPDATE SET Prompt = @prompt, SQL = @data_tables_json, ScreenshotURL = @image_url, LookConfigsJSON = @look_configs_json, TemplateURL = @template_gcs_path, LatestTemplateVersion = 1, BaseQuerySchemaJSON = @schema_json, FieldDisplayConfigsJSON = @field_display_configs_json, CalculationRowConfigsJSON = @calculation_row_configs_json, SubtotalConfigsJSON = @subtotal_configs_json, UserAttributeMappingsJSON = @user_attribute_mappings_json, LastGeneratedTimestamp = CURRENT_TIMESTAMP()
+        """
+
+        # Note: FieldDisplayConfigsJSON is now a legacy field, the configs are inside the SQL (data_tables_json) field.
+        # We'll leave it for now to avoid breaking the query, but it's no longer the source of truth.
+        
+        merge_params = [
+            ScalarQueryParameter("report_name", "STRING", report_name),
+            ScalarQueryParameter("prompt", "STRING", payload.prompt),
+            ScalarQueryParameter("data_tables_json", "STRING", data_tables_json_to_save), # Use new JSON string
+            ScalarQueryParameter("image_url", "STRING", payload.image_url),
+            ScalarQueryParameter("look_configs_json", "STRING", look_configs_json_to_save),
+            ScalarQueryParameter("template_gcs_path", "STRING", f"gs://{config.GCS_BUCKET_NAME}/{versioned_template_gcs_path_str}"),
+            ScalarQueryParameter("schema_json", "STRING", schema_json_to_save),
+            ScalarQueryParameter("field_display_configs_json", "STRING", "[]"), # Saving empty array to legacy field
+            ScalarQueryParameter("calculation_row_configs_json", "STRING", calculation_row_configs_json_to_save),
+            ScalarQueryParameter("subtotal_configs_json", "STRING", subtotal_configs_json_to_save),
+            ScalarQueryParameter("user_attribute_mappings_json", "STRING", user_attribute_mappings_json_str),
+        ]
+        bq_client.query(merge_sql, job_config=bigquery.QueryJobConfig(query_parameters=merge_params)).result()
+        # --- END OF REFACTORED BIGQUERY SAVE LOGIC ---
         
         print(f"BACKGROUND_TASK: Finished generation for report: '{report_name}'")
 

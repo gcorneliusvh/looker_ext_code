@@ -9,13 +9,12 @@ import {
     Space,
     IconButton,
     FieldText,
-    Textarea as LookerTextarea, // Using Looker's component for consistency
+    TextArea as LookerTextarea,
 } from '@looker/components';
 import { Add, Delete } from '@styled-icons/material';
 import { v4 as uuidv4 } from 'uuid';
 
 import FieldDisplayConfigurator from './FieldDisplayConfigurator';
-import PlaceholderMappingDialog from './PlaceholderMappingDialog';
 
 // --- Styled Components ---
 const FormWrapper = styled.div`
@@ -73,7 +72,7 @@ const Button = styled.button`
   }
 `;
 
-const DataTableSection = styled(Box)`
+const DynamicSection = styled(Box)`
   border: 1px solid ${({ theme }) => theme.colors.ui2};
   border-radius: ${({ theme }) => theme.radii.medium};
   margin-bottom: ${({ theme }) => theme.space.medium};
@@ -82,20 +81,23 @@ const DataTableSection = styled(Box)`
 // --- End of Styled Components ---
 
 function ReportForm() {
+  // Core Report States
   const [reportName, setReportName] = useState('');
   const [imageUrl, setImageUrl] = useState('');
   const [promptText, setPromptText] = useState('');
   const [userAttributeMappings, setUserAttributeMappings] = useState('');
-  const [lookConfigs, setLookConfigs] = useState([]);
-  
-  // --- NEW STATE for multiple data tables ---
+
+  // State for multiple data tables
   const [dataTables, setDataTables] = useState([
     { id: uuidv4(), placeholderName: '', sql: '', fieldConfigs: [] }
   ]);
-  const [configuringTableId, setConfiguringTableId] = useState(null);
-  // ---
+  
+  // State for multiple Look configurations
+  const [lookConfigs, setLookConfigs] = useState([]);
 
+  // Helper/Status States
   const [isFieldConfigModalOpen, setIsFieldConfigModalOpen] = useState(false);
+  const [configuringTableId, setConfiguringTableId] = useState(null);
   const [currentSchemaForConfig, setCurrentSchemaForConfig] = useState([]);
   const [calculationRows, setCalculationRows] = useState([]);
   const [dryRunLoading, setDryRunLoading] = useState(false);
@@ -126,7 +128,6 @@ function ReportForm() {
       table.id === id ? { ...table, [fieldName]: value } : table
     ));
   };
-  // ---
 
   // --- Handlers for multiple Look configurations ---
   const handleAddLookConfig = () => {
@@ -142,9 +143,8 @@ function ReportForm() {
       config.id === id ? { ...config, [fieldName]: value } : config
     ));
   };
-  // ---
 
-  // --- MODIFIED Dry Run and Config handlers ---
+  // --- Dry Run and Config handlers ---
   const handleDryRunAndConfigure = async (tableId, sqlQuery) => {
     if (!sdkReady) { alert("Looker SDK is not fully initialized."); return; }
     if (!sqlQuery.trim()) { alert("SQL query for this table cannot be empty."); return; }
@@ -152,7 +152,7 @@ function ReportForm() {
     setDryRunLoading(true);
     setDryRunError('');
     setSubmitStatus('');
-    setConfiguringTableId(tableId); // Keep track of which table we are configuring
+    setConfiguringTableId(tableId);
 
     try {
       const dryRunUrl = `${backendBaseUrl}/dry_run_sql_for_schema`;
@@ -190,9 +190,8 @@ function ReportForm() {
     setConfiguringTableId(null);
     setCurrentSchemaForConfig([]);
   };
-  // ---
 
-  // --- MODIFIED Submission handler ---
+  // --- Submission handler ---
   const handleSubmitDefinition = async () => {
     if (!sdkReady) { alert("Looker SDK not available."); return; }
     if (!reportName || !imageUrl || !promptText) { alert("Report Name, Image URL, and Prompt must be filled."); return; }
@@ -210,7 +209,6 @@ function ReportForm() {
       .filter(lc => lc.lookId && lc.placeholderName.trim())
       .map(lc => ({ look_id: parseInt(lc.lookId, 10), placeholder_name: lc.placeholderName.trim() }));
 
-    // Assemble the new data_tables payload
     const dataTablesPayload = dataTables
       .filter(dt => dt.placeholderName.trim() && dt.sql.trim())
       .map(dt => ({
@@ -229,8 +227,8 @@ function ReportForm() {
       report_name: reportName,
       image_url: imageUrl,
       prompt: promptText,
-      data_tables: dataTablesPayload, // Use new payload structure
-      filter_configs: [], // We will add UI for this later
+      data_tables: dataTablesPayload,
+      filter_configs: [],
       look_configs: finalLookConfigs,
       user_attribute_mappings: parsedMappings,
       calculation_row_configs: calculationRows,
@@ -253,7 +251,6 @@ function ReportForm() {
 
       setSubmitStatus(`Success! Report '${reportName}' was submitted. It is being generated in the background and will appear on the 'View All Reports' page shortly.`);
       
-      // Reset the form for the next submission
       setReportName(''); setImageUrl(''); setPromptText('');
       setUserAttributeMappings(''); setLookConfigs([]);
       setDataTables([{ id: uuidv4(), placeholderName: '', sql: '', fieldConfigs: [] }]);
@@ -285,18 +282,17 @@ function ReportForm() {
         <LookerTextarea id="promptText" value={promptText} onChange={(e) => setPromptText(e.target.value)} placeholder="e.g., Generate an HTML template with a title, a summary section, and placeholders for several data tables..." rows={5} disabled={isSubmitting}/>
       </FormGroup>
 
-      {/* --- NEW UI for multiple data tables --- */}
       <FormGroup>
         <Heading as="h2" fontSize="large" fontWeight="semiBold" mb="small">Data Tables</Heading>
         <Description>Define one or more data tables for your report. Each needs a unique placeholder name for the AI to use in the template.</Description>
         
         {dataTables.map((table, index) => (
-          <DataTableSection key={table.id}>
+          <DynamicSection key={table.id}>
             <Box display="flex" justifyContent="space-between" alignItems="center">
               <Heading as="h3" fontSize="medium">Data Table {index + 1}</Heading>
               <IconButton icon={<Delete />} label="Remove Data Table" onClick={() => handleRemoveDataTable(table.id)} disabled={dataTables.length <= 1}/>
             </Box>
-            <Space around>
+            <Space>
               <FieldText
                 label="Table Placeholder Name"
                 description="e.g., sales_summary_table"
@@ -324,7 +320,7 @@ function ReportForm() {
                 disabled={isSubmitting}
               />
             </Box>
-          </DataTableSection>
+          </DynamicSection>
         ))}
 
         <LookerButton onClick={handleAddDataTable} iconBefore={<Add />} disabled={isSubmitting}>
@@ -332,10 +328,48 @@ function ReportForm() {
         </LookerButton>
         {dryRunError && <p style={{color: 'red', marginTop: '10px'}}>{dryRunError}</p>}
       </FormGroup>
-      {/* --- End of new UI --- */}
-
+      
+      {/* This is the restored "Embed Looks" section */}
       <FormGroup>
-        {/* UI for Look Configs remains the same... */}
+        <Heading as="h2" fontSize="large" fontWeight="semiBold" mb="small">Embed Looks as Images (Optional)</Heading>
+        <Description>Add charts from saved Looks. Provide the Look ID and a unique placeholder name for Gemini to use in the template (e.g., `sales_trend_chart`).</Description>
+        <Box mt="medium">
+            {lookConfigs.map((config, index) => (
+                <DynamicSection key={config.id}>
+                    <Box display="flex" justifyContent="space-between" alignItems="center">
+                        <Heading as="h3" fontSize="medium">Chart {index + 1}</Heading>
+                        <IconButton icon={<Delete />} label="Remove Chart" onClick={() => handleRemoveLookConfig(config.id)} />
+                    </Box>
+                    <Space>
+                        <FieldText
+                            label="Look ID"
+                            value={config.lookId}
+                            onChange={(e) => handleLookConfigChange(config.id, 'lookId', e.target.value)}
+                            placeholder="e.g., 123"
+                            type="number"
+                            disabled={isSubmitting}
+                        />
+                        <FieldText
+                            label="Placeholder Name"
+                            value={config.placeholderName}
+                            onChange={(e) => handleLookConfigChange(config.id, 'placeholderName', e.target.value)}
+                            placeholder="e.g., sales_trend_chart"
+                            description="Use letters, numbers, underscores"
+                            disabled={isSubmitting}
+                        />
+                    </Space>
+                </DynamicSection>
+            ))}
+        </Box>
+        <LookerButton 
+            onClick={handleAddLookConfig} 
+            iconBefore={<Add />} 
+            mt="small"
+            size="small"
+            disabled={isSubmitting}
+        >
+            Add Chart from Look
+        </LookerButton>
       </FormGroup>
 
       <FormGroup>
@@ -349,7 +383,6 @@ function ReportForm() {
         onApply={handleApplyFieldConfigs}
         schema={currentSchemaForConfig}
         reportName={reportName}
-        // Pass the specific configs for the table being configured
         initialConfigs={
             (configuringTableId && dataTables.find(dt => dt.id === configuringTableId)?.fieldConfigs) || []
         }
