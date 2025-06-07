@@ -102,6 +102,25 @@ Custom Calculation Row: `<tr><td>Totals:</td>{{MyOverallTotals}}</tr>`
 """
 
 # --- Pydantic Models ---
+
+# New Models for Multiple Data Tables and Filter Mapping
+class DataTableConfig(BaseModel):
+    table_placeholder_name: str = Field(..., description="Unique placeholder for the AI to use for this table's rows, e.g., 'sales_by_region_table'")
+    sql_query: str
+    # Field display configs are now scoped to a specific data table
+    field_display_configs: List[FieldDisplayConfig] = Field(default_factory=list)
+
+class FilterUITarget(BaseModel):
+    target_type: str = Field(..., description="Either 'DATA_TABLE' or 'LOOK'")
+    target_id: str = Field(..., description="The 'table_placeholder_name' of the data table or the 'look_id'")
+    target_field_name: str = Field(..., description="The column name in the SQL query or the filter name in the Look")
+
+class FilterConfig(BaseModel):
+    ui_filter_key: str = Field(..., description="Unique key for this filter, e.g., 'date_range_filter'")
+    ui_label: str = Field(..., description="The user-friendly label shown in the UI, e.g., 'Select Date Range'")
+    data_type: str = Field(default="STRING", description="Helps the UI render the correct control, e.g., 'STRING', 'DATE', 'NUMBER'")
+    is_hidden_from_customer: bool = Field(default=False)
+    targets: List[FilterUITarget] = Field(default_factory=list)
 class LookConfig(BaseModel):
     look_id: int
     placeholder_name: str
@@ -122,13 +141,24 @@ class FieldDisplayConfig(BaseModel):
     group_summary_action: Optional[str] = None; repeat_group_value: Optional[str] = Field(default='REPEAT')
     numeric_aggregation: Optional[str] = None
 class ReportDefinitionPayload(BaseModel):
-    report_name: str; image_url: str; sql_query: str; prompt: str
+    report_name: str
+    image_url: str
+    prompt: str
+
+    # REPLACED 'sql_query' and 'field_display_configs' with 'data_tables'
+    data_tables: List[DataTableConfig] = Field(default_factory=list)
+    
+    # NEW field for filter mapping and visibility
+    filter_configs: List[FilterConfig] = Field(default_factory=list)
+
+    # Existing fields remain
     look_configs: Optional[List[LookConfig]] = None
-    field_display_configs: Optional[List[FieldDisplayConfig]] = None
     user_attribute_mappings: Optional[Dict[str, str]] = Field(default_factory=dict)
     calculation_row_configs: Optional[List[CalculationRowConfig]] = None
     subtotal_configs: Optional[List[SubtotalConfig]] = Field(default_factory=list)
-    optimized_prompt: Optional[str] = None; header_text: Optional[str] = None; footer_text: Optional[str] = None
+    optimized_prompt: Optional[str] = None
+    header_text: Optional[str] = None #
+    footer_text: Optional[str] = None #
 class ExecuteReportPayload(BaseModel):
     report_definition_name: str; filter_criteria_json: str = Field(default="{}")
 class ReportDefinitionListItem(BaseModel):
