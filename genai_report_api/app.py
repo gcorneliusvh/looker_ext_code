@@ -102,6 +102,30 @@ Custom Calculation Row: `<tr><td>Totals:</td>{{MyOverallTotals}}</tr>`
 """
 
 # --- Pydantic Models ---
+class LookConfig(BaseModel):
+    look_id: int
+    placeholder_name: str
+
+class CalculationType(str, Enum):
+    SUM = "SUM"; AVERAGE = "AVERAGE"; COUNT = "COUNT"; COUNT_DISTINCT = "COUNT_DISTINCT"; MIN = "MIN"; MAX = "MAX"
+
+class CalculatedValueConfig(BaseModel):
+    target_field_name: str; calculation_type: CalculationType
+    number_format: Optional[str] = None; alignment: Optional[str] = None
+
+class CalculationRowConfig(BaseModel):
+    row_label: str; values_placeholder_name: str; calculated_values: List[CalculatedValueConfig]
+
+class SubtotalConfig(BaseModel):
+    group_by_field_name: str; values_placeholder_name: str; calculated_values: List[CalculatedValueConfig]
+
+# FieldDisplayConfig MUST be defined before DataTableConfig
+class FieldDisplayConfig(BaseModel):
+    field_name: str; include_in_body: bool = Field(default=True); include_at_top: bool = Field(default=False)
+    include_in_header: bool = Field(default=False); context_note: Optional[str] = None
+    alignment: Optional[str] = None; number_format: Optional[str] = None
+    group_summary_action: Optional[str] = None; repeat_group_value: Optional[str] = Field(default='REPEAT')
+    numeric_aggregation: Optional[str] = None
 
 # New Models for Multiple Data Tables and Filter Mapping
 class DataTableConfig(BaseModel):
@@ -121,25 +145,8 @@ class FilterConfig(BaseModel):
     data_type: str = Field(default="STRING", description="Helps the UI render the correct control, e.g., 'STRING', 'DATE', 'NUMBER'")
     is_hidden_from_customer: bool = Field(default=False)
     targets: List[FilterUITarget] = Field(default_factory=list)
-class LookConfig(BaseModel):
-    look_id: int
-    placeholder_name: str
 
-class CalculationType(str, Enum):
-    SUM = "SUM"; AVERAGE = "AVERAGE"; COUNT = "COUNT"; COUNT_DISTINCT = "COUNT_DISTINCT"; MIN = "MIN"; MAX = "MAX"
-class CalculatedValueConfig(BaseModel):
-    target_field_name: str; calculation_type: CalculationType
-    number_format: Optional[str] = None; alignment: Optional[str] = None
-class CalculationRowConfig(BaseModel):
-    row_label: str; values_placeholder_name: str; calculated_values: List[CalculatedValueConfig]
-class SubtotalConfig(BaseModel):
-    group_by_field_name: str; values_placeholder_name: str; calculated_values: List[CalculatedValueConfig]
-class FieldDisplayConfig(BaseModel):
-    field_name: str; include_in_body: bool = Field(default=True); include_at_top: bool = Field(default=False)
-    include_in_header: bool = Field(default=False); context_note: Optional[str] = None
-    alignment: Optional[str] = None; number_format: Optional[str] = None
-    group_summary_action: Optional[str] = None; repeat_group_value: Optional[str] = Field(default='REPEAT')
-    numeric_aggregation: Optional[str] = None
+# Main Payload Definition - MODIFIED
 class ReportDefinitionPayload(BaseModel):
     report_name: str
     image_url: str
@@ -157,10 +164,13 @@ class ReportDefinitionPayload(BaseModel):
     calculation_row_configs: Optional[List[CalculationRowConfig]] = None
     subtotal_configs: Optional[List[SubtotalConfig]] = Field(default_factory=list)
     optimized_prompt: Optional[str] = None
-    header_text: Optional[str] = None #
-    footer_text: Optional[str] = None #
+    header_text: Optional[str] = None
+    footer_text: Optional[str] = None
+
+# Other models for different endpoints
 class ExecuteReportPayload(BaseModel):
     report_definition_name: str; filter_criteria_json: str = Field(default="{}")
+
 class ReportDefinitionListItem(BaseModel):
     ReportName: str; Prompt: Optional[str] = None; SQL: Optional[str] = None; ScreenshotURL: Optional[str] = None
     LookConfigsJSON: Optional[str] = None
@@ -170,18 +180,22 @@ class ReportDefinitionListItem(BaseModel):
     CalculationRowConfigsJSON: Optional[str] = None; SubtotalConfigsJSON: Optional[str] = None
     UserPlaceholderMappingsJSON: Optional[str] = None
     LastGeneratedTimestamp: Optional[datetime.datetime] = None
+
 class SystemInstructionPayload(BaseModel): system_instruction: str
+
 class SqlQueryPayload(BaseModel): sql_query: str
 
 class PlaceholderMappingSuggestion(BaseModel):
     map_to_type: Optional[str] = None
     map_to_value: Optional[str] = None
     usage_as: Optional[str] = None
+
 class DiscoveredPlaceholderInfo(BaseModel):
     original_tag: str
     key_in_tag: str
     status: str
     suggestion: Optional[PlaceholderMappingSuggestion] = None
+
 class DiscoverPlaceholdersResponse(BaseModel):
     report_name: str; placeholders: List[DiscoveredPlaceholderInfo]
     template_found: bool; error_message: Optional[str] = None
