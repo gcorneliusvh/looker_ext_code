@@ -80,15 +80,48 @@ function ViewAllReports({ onSelectReportForFiltering }) {
         } catch (e) {
             console.error(`Failed to parse LookConfigsJSON for report ${report.ReportName}:`, e);
         }
+
+        // --- NEW SCHEMA PARSING LOGIC ---
+        let combinedSchema = [];
+        if (report.BaseQuerySchemaJSON) {
+            try {
+                const parsedSchema = JSON.parse(report.BaseQuerySchemaJSON);
+                if (Array.isArray(parsedSchema)) {
+                    // Handle old format (single schema array) for backward compatibility
+                    combinedSchema = parsedSchema;
+                } else if (typeof parsedSchema === 'object' && parsedSchema !== null) {
+                    // Handle new format (object with schemas per table)
+                    // Combine all fields from all tables into one list for the filter UI.
+                    let allFields = [];
+                    for (const key in parsedSchema) {
+                        if (Array.isArray(parsedSchema[key])) {
+                            allFields.push(...parsedSchema[key]);
+                        }
+                    }
+                    // De-duplicate fields by name to avoid showing the same filter twice
+                    const uniqueFields = new Map();
+                    allFields.forEach(field => {
+                        if (!uniqueFields.has(field.name)) {
+                            uniqueFields.set(field.name, field);
+                        }
+                    });
+                    combinedSchema = Array.from(uniqueFields.values());
+                }
+            } catch (e) {
+                console.error(`Failed to parse BaseQuerySchemaJSON for report ${report.ReportName}:`, e);
+            }
+        }
+        // --- END OF NEW SCHEMA PARSING LOGIC ---
+
         return {
             ...report,
-            schema: report.BaseQuerySchemaJSON ? JSON.parse(report.BaseQuerySchemaJSON) : [],
-            lookConfigs: lookConfigs, // Store parsed array
+            schema: combinedSchema, // Use the new combined and de-duplicated schema
+            lookConfigs: lookConfigs,
         };
       });
       setReports(reportsWithParsedData);
       console.log("ViewAllReports: Report definitions loaded.");
-    } catch (err) {
+    } catch (err)      {
       console.error("ViewAllReports: Error fetching report definitions:", err);
       setError(`Failed to load report definitions: ${err.message || 'Unknown error during fetch'}`);
     } finally {
@@ -177,7 +210,7 @@ function ViewAllReports({ onSelectReportForFiltering }) {
       displayReports.sort((a, b) => {
         const dateA = new Date(a.LastGeneratedTimestamp || 0).getTime();
         const dateB = new Date(b.LastGeneratedTimestamp || 0).getTime();
-        return sortConfig.direction === 'asc' ? dateA - dateB : dateB - dateA;
+        return sortConfig.direction === 'asc' ? dateA - dateB : dateB - a;
       });
     }
 
