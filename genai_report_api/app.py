@@ -1085,7 +1085,7 @@ async def execute_report_and_get_url(
 
     # --- 1. Fetch and Parse Report Definition ---
     query_def_sql_exec = f"""
-        SELECT SQL, TemplateURL, UserAttributeMappingsJSON, BaseQuerySchemaJSON,
+        SELECT SQL, TemplateURL, UserAttributeMappingsJSON, BaseQuerySchemaJSON,FilterConfigsJSON,
                LookConfigsJSON, CalculationRowConfigsJSON, UserPlaceholderMappingsJSON
         FROM `{config.gcp_project_id}.report_printing.report_list` WHERE ReportName = @report_name_param
     """
@@ -1209,11 +1209,35 @@ async def execute_report_and_get_url(
     # This logic remains mostly the same
     if look_configs_json:
         look_configs = json.loads(look_configs_json)
+        # Parse the filter map and the user's runtime filter values
+        parsed_filter_configs = json.loads(row_exec.get("FilterConfigsJSON") or '[]')
+        user_filter_values = looker_filters_payload_exec.get("dynamic_filters", {})
+
         for look_config in look_configs:
             placeholder_to_replace = f"{{{{{look_config['placeholder_name']}}}}}"
+            
+            # Build the filter dictionary for this specific Look
+            look_filters_for_sdk = {}
+            for fc in parsed_filter_configs:
+                ui_key = fc.get('ui_filter_key')
+                # Check if the user provided a value for this filter at runtime
+                if ui_key in user_filter_values:
+                    # Find if this filter targets the current Look
+                    for target in fc.get('targets', []):
+                        if target.get('target_type') == 'LOOK' and str(target.get('target_id')) == str(look_config['look_id']):
+                            look_filter_name = target.get('target_field_name')
+                            filter_value = user_filter_values[ui_key]
+                            if look_filter_name and filter_value is not None:
+                                look_filters_for_sdk[look_filter_name] = str(filter_value)
+            
             try:
-                # NOTE: A full implementation would pass mapped filters here
-                image_bytes = looker_sdk.run_look(look_id=str(look_config['look_id']), result_format="png")
+                print(f"INFO: Rendering Look ID {look_config['look_id']} with filters: {look_filters_for_sdk}")
+                image_bytes = looker_sdk.run_look(
+                    look_id=str(look_config['look_id']),
+                    result_format="png",
+                    # Pass the constructed dictionary to the SDK
+                    filters=look_filters_for_sdk if look_filters_for_sdk else None
+                )
                 base64_image = base64.b64encode(image_bytes).decode('utf-8')
                 image_src_string = f"data:image/png;base64,{base64_image}"
                 populated_html = populated_html.replace(placeholder_to_replace, image_src_string)
@@ -1221,15 +1245,6 @@ async def execute_report_and_get_url(
                 print(f"ERROR: Failed to render Look {look_config['look_id']}: {e}")
                 populated_html = populated_html.replace(placeholder_to_replace, "")
 
-    # Save and return final report URL
-    report_id = str(uuid.uuid4())
-    generated_report_gcs_blob_name = f"{config.GCS_GENERATED_REPORTS_PREFIX}{report_id}.html"
-    try:
-        bucket = gcs_client.bucket(config.GCS_BUCKET_NAME)
-        blob_out = bucket.blob(generated_report_gcs_blob_name)
-        blob_out.upload_from_string(populated_html, content_type='text/html; charset=utf-8')
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to store generated report to GCS: {str(e)}")
 
     report_url_path = f"/view_generated_report/{report_id}"
     return JSONResponse(content={"report_url_path": report_url_path})
