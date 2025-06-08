@@ -870,6 +870,7 @@ async def upsert_report_definition(
     bq_client: bigquery.Client = Depends(get_bigquery_client_dep),
     gcs_client: storage.Client = Depends(get_storage_client_dep)
 ):
+    print(f"--- Backend Payload Received ---\n{payload.model_dump_json(indent=2)}")
     """
     Accepts a report definition, validates it quickly, and schedules the slow
     AI generation and asset saving to run in the background. Returns immediately.
