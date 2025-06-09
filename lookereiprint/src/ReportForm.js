@@ -147,32 +147,76 @@ function ReportForm() {
   };
   const handleCloseConfigModal = () => { setIsFieldConfigModalOpen(false); setConfiguringTableId(null); setCurrentSchemaForConfig([]); };
   const handleSubmitDefinition = async () => {
-    setIsSubmitting(true); setSubmitStatus('Submitting definition...');
-    const dataTablesPayload = dataTables.filter(dt => dt.placeholderName && dt.sql).map(dt => ({
-      table_placeholder_name: dt.placeholderName,
-      sql_query: dt.sql,
-      field_display_configs: dt.fieldConfigs
-    }));
-    const looksPayload = lookConfigs.filter(lc => lc.lookId && lc.placeholderName).map(({ id, ...rest }) => ({...rest, look_id: parseInt(rest.lookId, 10)}));
-    const filtersPayload = filterConfigs
-    .filter(f => f.ui_filter_key && f.ui_label) // Filter out filters with empty keys or labels
-    .map(({ id, targets, ...rest }) => ({
-      ...rest,
-      targets: targets
-        .filter(t => t.target_id && t.target_field_name) // Filter out targets with empty fields
-        .map(({ id, ...tRest }) => tRest)
-    }));
-    const definitionPayload = { report_name: reportName, imageUrl: imageUrl, prompt: promptText, data_tables: dataTablesPayload, look_configs: looksPayload, filter_configs: filtersPayload, user_attribute_mappings: JSON.parse(userAttributeMappings || '{}'), calculation_row_configs: calculationRows, subtotal_configs: [] };
-    console.log('--- Frontend Payload Sent ---', JSON.stringify(definitionPayload, null, 2));
+    setIsSubmitting(true);
+    setSubmitStatus('Submitting definition...');
+
     try {
-      const response = await extensionSDK.fetchProxy(`${backendBaseUrl}/report_definitions`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(definitionPayload) });
-      if (!response.ok) throw new Error(response.body?.detail || `Error: ${response.status}`);
+      // This will now be caught if the JSON is invalid
+      const parsedUserAttributeMappings = JSON.parse(userAttributeMappings || '{}');
+
+      const dataTablesPayload = dataTables.filter(dt => dt.placeholderName && dt.sql).map(dt => ({
+        table_placeholder_name: dt.placeholderName,
+        sql_query: dt.sql,
+        field_display_configs: dt.fieldConfigs
+      }));
+
+      const looksPayload = lookConfigs.filter(lc => lc.lookId && lc.placeholderName).map(lc => ({
+        look_id: parseInt(lc.lookId, 10),
+        placeholder_name: lc.placeholderName
+      }));
+
+      const filtersPayload = filterConfigs
+        .filter(f => f.ui_filter_key && f.ui_label)
+        .map(({ id, targets, ...rest }) => ({
+          ...rest,
+          targets: targets
+            .filter(t => t.target_id && t.target_field_name)
+            .map(({ id, ...tRest }) => tRest)
+        }));
+
+      if (dataTablesPayload.length === 0) {
+        throw new Error("You must define at least one data table with a placeholder name and SQL query.");
+      }
+
+      const definitionPayload = {
+        report_name: reportName,
+        image_url: imageUrl,
+        prompt: promptText,
+        data_tables: dataTablesPayload,
+        look_configs: looksPayload,
+        filter_configs: filtersPayload,
+        user_attribute_mappings: parsedUserAttributeMappings,
+        calculation_row_configs: calculationRows,
+        subtotal_configs: [],
+      };
+      
+      console.log('--- Frontend Payload Sent ---', JSON.stringify(definitionPayload, null, 2));
+
+      const response = await extensionSDK.fetchProxy(`${backendBaseUrl}/report_definitions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(definitionPayload)
+      });
+
+      if (!response.ok) {
+        const errorBody = response.body || { detail: `Request failed with status ${response.status}` };
+        throw new Error(errorBody.detail);
+      }
+      
       setSubmitStatus(`Success! Report '${reportName}' submitted for background generation.`);
+      // Reset form
       setReportName(''); setImageUrl(''); setPromptText(''); setUserAttributeMappings('');
       setDataTables([{ id: uuidv4(), placeholderName: '', sql: '', fieldConfigs: [] }]);
       setLookConfigs([]); setFilterConfigs([]);
-    } catch (error) { setSubmitStatus(`Error: ${error.message}`);
-    } finally { setIsSubmitting(false); }
+
+    } catch (error) {
+      // This will now catch errors from JSON.parse() or the network request
+      const errorMessage = `Failed to submit. Please check your inputs, especially the User Attribute Mappings JSON.\n\nError: ${error.message}`;
+      setSubmitStatus(errorMessage);
+      alert(errorMessage);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (

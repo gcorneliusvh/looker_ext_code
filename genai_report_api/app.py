@@ -1086,7 +1086,7 @@ async def execute_report_and_get_url(
 
     # --- 1. Fetch and Parse Report Definition ---
     query_def_sql_exec = f"""
-        SELECT SQL, TemplateURL, UserAttributeMappingsJSON, BaseQuerySchemaJSON,FilterConfigsJSON,
+        SELECT SQL, TemplateURL, UserAttributeMappingsJSON, BaseQuerySchemaJSON, FilterConfigsJSON,
                LookConfigsJSON, CalculationRowConfigsJSON, UserPlaceholderMappingsJSON
         FROM `{config.gcp_project_id}.report_printing.report_list` WHERE ReportName = @report_name_param
     """
@@ -1102,128 +1102,199 @@ async def execute_report_and_get_url(
         look_configs_json = row_exec.get("LookConfigsJSON")
         user_attr_map_json = row_exec.get("UserAttributeMappingsJSON")
         all_schemas = json.loads(row_exec.get("BaseQuerySchemaJSON") or '{}')
-        parsed_calculation_row_configs = json.loads(row_exec.get("CalculationRowConfigsJSON") or '[]')
+        parsed_calculation_row_configs = [CalculationRowConfig(**item) for item in json.loads(row_exec.get("CalculationRowConfigsJSON") or '[]')]
+        parsed_filter_configs = json.loads(row_exec.get("FilterConfigsJSON") or '[]')
 
         if not data_tables_json or not html_template_gcs_path:
             raise HTTPException(status_code=404, detail="Report definition is incomplete. Missing Data Tables or Template URL.")
 
-        data_tables_configs = json.loads(data_tables_json)
+        data_tables_configs = [DataTableConfig(**dt) for dt in json.loads(data_tables_json)]
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching report definition '{report_definition_name}': {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error fetching or parsing report definition '{report_definition_name}': {str(e)}")
 
     # Load the base HTML template from GCS
     try:
         path_parts = html_template_gcs_path.replace("gs://", "").split("/", 1)
         blob = gcs_client.bucket(path_parts[0]).blob(path_parts[1])
-        populated_html = blob.download_as_text(encoding='utf-8') if blob.exists() else "<html><body>Template not found</body></html>"
+        populated_html = blob.download_as_text(encoding='utf-8') if blob.exists() else f"<html><body>Template not found at {html_template_gcs_path}</body></html>"
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load HTML template: {str(e)}")
 
-    # --- 2. Build Filter Logic (once, at the top) ---
-    # This logic is restored from the original function
-    current_query_params_for_bq_exec = []; current_conditions_exec = []; param_idx_exec = 0
+    # --- 2. Build Filter Logic ---
+    current_query_params_for_bq_exec = []; param_idx_exec = 0
+    base_conditions = []
     try:
         looker_filters_payload_exec = json.loads(filter_criteria_json_str or "{}")
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=400, detail=f"Invalid JSON for filter_criteria: {str(e)}")
     
-    # NOTE: This filter building logic is generic. A full implementation would use the
-    # filter mapping configuration to apply these to the correct columns in each table.
-    # For now, it will attempt to apply these filters to any table that has matching column names.
     for filter_key, val_str_list in looker_filters_payload_exec.get("dynamic_filters", {}).items():
-        bq_col, op_conf, op_sfx = None, None, None
+        bq_col, op_conf = None, None
         for sfx_key_iter_dyn in sorted(ALLOWED_FILTER_OPERATORS.keys(), key=len, reverse=True):
             if filter_key.endswith(sfx_key_iter_dyn):
-                bq_col, op_conf, op_sfx = filter_key[:-len(sfx_key_iter_dyn)], ALLOWED_FILTER_OPERATORS[sfx_key_iter_dyn], sfx_key_iter_dyn
+                bq_col, op_conf = filter_key[:-len(sfx_key_iter_dyn)], ALLOWED_FILTER_OPERATORS[sfx_key_iter_dyn]
                 break
-        if bq_col and op_conf and op_sfx:
+        if bq_col and op_conf:
             try:
+                p_name = f"df_p_{param_idx_exec}"; param_idx_exec += 1
+                bq_type, typed_val = get_bq_param_type_and_value(str(val_str_list), bq_col, op_conf["param_type_hint"])
                 if op_conf["param_type_hint"] != "NONE":
-                    p_name = f"df_p_{param_idx_exec}"; param_idx_exec += 1
-                    current_conditions_exec.append({'col': bq_col, 'op': op_conf['op'], 'p_name': p_name})
-                    bq_type, typed_val = get_bq_param_type_and_value(str(val_str_list), bq_col, op_conf["param_type_hint"])
+                    base_conditions.append({'col': bq_col, 'op': op_conf['op'], 'p_name': p_name})
                     current_query_params_for_bq_exec.append(ScalarQueryParameter(p_name, bq_type, typed_val))
-            except ValueError as ve:
-                print(f"WARN: Skipping Dyn filter '{bq_col}': {ve}")
+                else:
+                    base_conditions.append({'col': bq_col, 'op': op_conf['op'], 'p_name': None}) # For IS NULL, IS NOT NULL
+            except ValueError as ve: print(f"WARN: Skipping Dyn filter '{bq_col}': {ve}")
 
     # --- 3. Loop through each Data Table to execute and render ---
-    for table_config in data_tables_configs:
-        table_placeholder_name = table_config.get("table_placeholder_name")
-        base_sql_query = table_config.get("sql_query")
-        field_configs_list = table_config.get("field_display_configs", [])
+    for table_idx, table_config in enumerate(data_tables_configs):
+        table_placeholder_name = table_config.table_placeholder_name
+        base_sql_query = table_config.sql_query
+        field_configs_list = table_config.field_display_configs
         
-        if not table_placeholder_name or not base_sql_query:
-            continue
+        if not table_placeholder_name or not base_sql_query: continue
             
-        field_configs_map = {fc['field_name']: FieldDisplayConfig(**fc) for fc in field_configs_list}
+        field_configs_map = {fc.field_name: fc for fc in field_configs_list}
         schema_for_table = all_schemas.get(table_placeholder_name, [])
         schema_type_map = {f['name']: f['type'] for f in schema_for_table}
         body_field_names_in_order = [f['name'] for f in schema_for_table if field_configs_map.get(f['name'], FieldDisplayConfig(field_name=f['name'])).include_in_body]
         
         # Apply relevant filters to this specific query
         final_sql = base_sql_query
-        table_conditions = [f"`{cond['col']}` {cond['op']} @{cond['p_name']}" for cond in current_conditions_exec if cond['col'] in schema_type_map]
+        table_conditions = []
+        for cond in base_conditions:
+            if cond['col'] in schema_type_map:
+                if cond['p_name']: table_conditions.append(f"`{cond['col']}` {cond['op']} @{cond['p_name']}")
+                else: table_conditions.append(f"`{cond['col']}` {cond['op']}")
+        
         if table_conditions:
             conditions_sql_segment = " AND ".join(table_conditions)
-            if " where " in final_sql.lower():
-                final_sql = f"{final_sql} AND ({conditions_sql_segment})"
-            else:
-                final_sql = f"SELECT * FROM ({final_sql}) AS GenAIReportSubquery WHERE {conditions_sql_segment}"
+            if " where " in final_sql.lower(): final_sql += f" AND ({conditions_sql_segment})"
+            else: final_sql = f"SELECT * FROM ({final_sql}) AS GenAIReportSubquery WHERE {conditions_sql_segment}"
 
         # Execute the query for the current table
         try:
             print(f"INFO: Executing BQ Query for table '{table_placeholder_name}':\n{final_sql}")
             job_cfg_exec = bigquery.QueryJobConfig(query_parameters=current_query_params_for_bq_exec)
-            query_job = bq_client.query(final_sql, job_config=job_cfg_exec)
-            data_rows_list = [convert_row_to_json_serializable(row) for row in query_job.result()]
+            data_rows_list = [convert_row_to_json_serializable(row) for row in query_job.result()] if (query_job := bq_client.query(final_sql, job_config=job_cfg_exec)) else []
         except Exception as e:
-            error_message = str(e)
-            print(f"ERROR: BQ execution for table '{table_placeholder_name}': {error_message}")
+            print(f"ERROR: BQ execution for table '{table_placeholder_name}': {str(e)}")
             data_rows_list = []
 
-        # --- Re-integrated Subtotal and Row Generation Logic (scoped per table) ---
+        # --- START: FULLY INTEGRATED SUBTOTAL/GRAND TOTAL/ROW GENERATION LOGIC ---
         table_rows_html_str = ""
+        group_by_field = next((fc.field_name for fc in field_configs_list if fc.group_summary_action in ['SUBTOTAL_ONLY', 'SUBTOTAL_AND_GRAND_TOTAL']), None)
+        agg_fields = {fc.field_name: fc.numeric_aggregation for fc in field_configs_list if fc.numeric_aggregation and schema_type_map.get(fc.field_name) in NUMERIC_TYPES_FOR_AGG}
+        
+        grand_total_needed = any(fc.group_summary_action in ['GRAND_TOTAL_ONLY', 'SUBTOTAL_AND_GRAND_TOTAL'] for fc in field_configs_list)
+        grand_total_accumulators = {f: [] for f in agg_fields}
+        
         if not data_rows_list:
-            colspan = len(body_field_names_in_order) if body_field_names_in_order else 1
-            table_rows_html_str = f"<tr><td colspan='{colspan}' style='text-align:center; padding: 20px;'>No data found.</td></tr>"
+            colspan = len(body_field_names_in_order) or 1
+            table_rows_html_str = f"<tr><td colspan='{colspan}' style='text-align:center; padding: 20px;'>No data returned for this table.</td></tr>"
         else:
-            # This complex logic for creating rows is restored from the original function
-            # and now operates on the data for the current table in the loop.
-            for row_data in data_rows_list:
-                row_html_item = "<tr>\n"
-                for header_key in body_field_names_in_order:
+            current_group_val, subtotal_accumulators = None, {f: [] for f in agg_fields}
+
+            for row_idx, row_data in enumerate(data_rows_list):
+                # -- Handle Subtotal Group Breaks --
+                if group_by_field:
+                    new_group_val = row_data.get(group_by_field)
+                    is_first_row_of_group = current_group_val != new_group_val
+                    if row_idx > 0 and is_first_row_of_group:
+                        subtotal_html = f"<tr class='subtotal-row' style='font-weight: bold; background-color: #f2f2f2;'><td style='text-align: right;' colspan='{len(body_field_names_in_order) - len(agg_fields)}'>Subtotal for {current_group_val}:</td>"
+                        for field_name in body_field_names_in_order:
+                            if field_name in agg_fields:
+                                result = calculate_aggregate([Decimal(v) for v in subtotal_accumulators[field_name]], agg_fields[field_name])
+                                config = field_configs_map.get(field_name)
+                                subtotal_html += f"<td style='text-align: {config.alignment or 'right'};'>{format_value(result, config.number_format, schema_type_map[field_name])}</td>"
+                        subtotal_html += "</tr>"
+                        table_rows_html_str += subtotal_html
+                        subtotal_accumulators = {f: [] for f in agg_fields} # Reset for next group
+                    current_group_val = new_group_val
+                
+                # -- Process and Accumulate Data for Current Row --
+                for field, agg_type in agg_fields.items():
+                    val = row_data.get(field)
+                    if val is not None:
+                        try:
+                            dec_val = Decimal(str(val))
+                            if group_by_field: subtotal_accumulators[field].append(dec_val)
+                            if grand_total_needed: grand_total_accumulators[field].append(dec_val)
+                        except InvalidOperation: pass
+
+                # -- Generate HTML for the regular data row --
+                row_html_item = "<tr>"
+                for col_idx, header_key in enumerate(body_field_names_in_order):
                     field_config = field_configs_map.get(header_key)
-                    field_type = schema_type_map.get(header_key, "STRING")
                     cell_value = row_data.get(header_key)
-                    formatted_val = format_value(cell_value, field_config.number_format if field_config else None, field_type)
+                    formatted_val = format_value(cell_value, field_config.number_format if field_config else None, schema_type_map.get(header_key, "STRING"))
+                    
+                    # Handle repeating group value display logic
+                    if group_by_field and header_key == group_by_field and field_config.repeat_group_value == 'SHOW_ON_CHANGE' and not is_first_row_of_group:
+                        formatted_val = ''
+
                     align_val = (field_config.alignment if field_config else "left")
-                    row_html_item += f"  <td style='text-align: {align_val};'>{formatted_val}</td>\n"
+                    row_html_item += f"  <td style='text-align: {align_val};'>{formatted_val}</td>"
                 row_html_item += "</tr>\n"
                 table_rows_html_str += row_html_item
 
+            # -- Append final subtotal row for the last group --
+            if group_by_field and data_rows_list:
+                subtotal_html = f"<tr class='subtotal-row' style='font-weight: bold; background-color: #f2f2f2;'><td style='text-align: right;' colspan='{len(body_field_names_in_order) - len(agg_fields)}'>Subtotal for {current_group_val}:</td>"
+                for field_name in body_field_names_in_order:
+                    if field_name in agg_fields:
+                        result = calculate_aggregate([Decimal(v) for v in subtotal_accumulators[field_name]], agg_fields[field_name])
+                        config = field_configs_map.get(field_name)
+                        subtotal_html += f"<td style='text-align: {config.alignment or 'right'};'>{format_value(result, config.number_format, schema_type_map[field_name])}</td>"
+                subtotal_html += "</tr>"
+                table_rows_html_str += subtotal_html
+
+            # -- Append Grand Total Row if needed --
+            if grand_total_needed and data_rows_list:
+                gt_html = f"<tr class='grand-total-row' style='font-weight: bold; border-top: 2px solid black; background-color: #e0e0e0;'><td style='text-align: right;' colspan='{len(body_field_names_in_order) - len(agg_fields)}'>Grand Total:</td>"
+                for field_name in body_field_names_in_order:
+                    if field_name in agg_fields:
+                        result = calculate_aggregate([Decimal(v) for v in grand_total_accumulators[field_name]], agg_fields[field_name])
+                        config = field_configs_map.get(field_name)
+                        gt_html += f"<td style='text-align: {config.alignment or 'right'};'>{format_value(result, config.number_format, schema_type_map[field_name])}</td>"
+                gt_html += "</tr>"
+                table_rows_html_str += gt_html
+
+            # -- DESIGN ASSUMPTION: Process Explicit Calculation Rows for the FIRST table ONLY --
+            if table_idx == 0 and parsed_calculation_row_configs:
+                for calc_config in parsed_calculation_row_configs:
+                    calc_row_html = f"<tr class='calculation-row' style='font-weight:bold; background-color: #e8e8e8;'><td colspan='1'>{calc_config.row_label}</td>" # Label in first cell
+                    td_outputs = ""
+                    for value_conf in calc_config.calculated_values:
+                        data_to_agg = [Decimal(str(r.get(value_conf.target_field_name, 0))) for r in data_rows_list if r.get(value_conf.target_field_name) is not None]
+                        agg_result = calculate_aggregate(data_to_agg, value_conf.calculation_type.value)
+                        agg_html = format_value(agg_result, value_conf.number_format, schema_type_map.get(value_conf.target_field_name))
+                        td_outputs += f"<td style='text-align: {value_conf.alignment or 'right'};'>{agg_html}</td>"
+                    
+                    # This placeholder is replaced by multiple TDs
+                    calc_row_html_final = populated_html.replace(f"{{{{{calc_config.values_placeholder_name}}}}}", td_outputs)
+                    # We only need the row content, find it between <tbody> and </tbody> to avoid replacing the whole document
+                    calc_row_part = re.search(f"<tr.*?>.*{re.escape(td_outputs)}.*</tr>", calc_row_html_final, re.DOTALL)
+                    if calc_row_part: table_rows_html_str += calc_row_part.group(0)
+
+        # --- END: ROW GENERATION LOGIC ---
+        
+        # Replace the unique placeholder for the current table's rows
         placeholder_to_replace = f"{{{{TABLE_ROWS_{table_placeholder_name}}}}}"
         populated_html = populated_html.replace(placeholder_to_replace, table_rows_html_str)
     # --- END of data table loop ---
 
     # --- 4. Process Looks and Finalize Report ---
-    # This logic remains mostly the same
     if look_configs_json:
         look_configs = json.loads(look_configs_json)
-        # Parse the filter map and the user's runtime filter values
-        parsed_filter_configs = json.loads(row_exec.get("FilterConfigsJSON") or '[]')
         user_filter_values = looker_filters_payload_exec.get("dynamic_filters", {})
 
         for look_config in look_configs:
             placeholder_to_replace = f"{{{{{look_config['placeholder_name']}}}}}"
-            
-            # Build the filter dictionary for this specific Look
             look_filters_for_sdk = {}
             for fc in parsed_filter_configs:
                 ui_key = fc.get('ui_filter_key')
-                # Check if the user provided a value for this filter at runtime
                 if ui_key in user_filter_values:
-                    # Find if this filter targets the current Look
                     for target in fc.get('targets', []):
                         if target.get('target_type') == 'LOOK' and str(target.get('target_id')) == str(look_config['look_id']):
                             look_filter_name = target.get('target_field_name')
@@ -1233,20 +1304,26 @@ async def execute_report_and_get_url(
             
             try:
                 print(f"INFO: Rendering Look ID {look_config['look_id']} with filters: {look_filters_for_sdk}")
-                image_bytes = looker_sdk.run_look(
-                    look_id=str(look_config['look_id']),
-                    result_format="png",
-                    # Pass the constructed dictionary to the SDK
-                    filters=look_filters_for_sdk if look_filters_for_sdk else None
-                )
+                image_bytes = looker_sdk.run_look(look_id=str(look_config['look_id']), result_format="png", filters=look_filters_for_sdk if look_filters_for_sdk else None)
                 base64_image = base64.b64encode(image_bytes).decode('utf-8')
-                image_src_string = f"data:image/png;base64,{base64_image}"
+                image_src_string = f"<img src='data:image/png;base64,{base64_image}' style='max-width:100%; height:auto;'/>"
                 populated_html = populated_html.replace(placeholder_to_replace, image_src_string)
             except Exception as e:
                 print(f"ERROR: Failed to render Look {look_config['look_id']}: {e}")
-                populated_html = populated_html.replace(placeholder_to_replace, "")
+                populated_html = populated_html.replace(placeholder_to_replace, f"Error rendering chart: {e}")
 
-
+    # --- 5. Save final HTML to GCS and return URL ---
+    try:
+        report_id = str(uuid.uuid4())
+        output_gcs_blob_name = f"{config.GCS_GENERATED_REPORTS_PREFIX}{report_id}.html"
+        bucket = gcs_client.bucket(config.GCS_BUCKET_NAME)
+        blob_out = bucket.blob(output_gcs_blob_name)
+        blob_out.upload_from_string(populated_html, content_type='text/html; charset=utf-8')
+        print(f"INFO: Successfully generated and saved report to gs://{config.GCS_BUCKET_NAME}/{output_gcs_blob_name}")
+    except Exception as e:
+        print(f"FATAL: Could not upload final report to GCS. Error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to save final report to GCS: {str(e)}")
+        
     report_url_path = f"/view_generated_report/{report_id}"
     return JSONResponse(content={"report_url_path": report_url_path})
 
