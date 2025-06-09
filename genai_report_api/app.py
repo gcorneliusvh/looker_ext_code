@@ -1269,9 +1269,11 @@ async def execute_report_and_get_url(
         placeholder_to_replace = f"{{{{TABLE_ROWS_{table_placeholder_name}}}}}"
         populated_html = populated_html.replace(placeholder_to_replace, table_rows_html_str)
 #Small Change
+# --- 4. Process Looks and Finalize Report ---
     if look_configs_json:
         look_configs = json.loads(look_configs_json)
         user_filter_values = looker_filters_payload_exec.get("dynamic_filters", {})
+
         for look_config in look_configs:
             placeholder_to_replace = f"{{{{{look_config['placeholder_name']}}}}}"
             look_filters_for_sdk = {}
@@ -1284,9 +1286,37 @@ async def execute_report_and_get_url(
                             filter_value = user_filter_values[ui_key]
                             if look_filter_name and filter_value is not None:
                                 look_filters_for_sdk[look_filter_name] = str(filter_value)
+            
             try:
-                print(f"INFO: Rendering Look ID {look_config['look_id']} with filters: {look_filters_for_sdk}")
-                image_bytes = looker_sdk.run_look(look_id=str(look_config['look_id']), result_format="png", filters=look_filters_for_sdk if look_filters_for_sdk else None)
+                print(f"INFO: Rendering Look ID {look_config['look_id']} with new filters: {look_filters_for_sdk}")
+
+                # 1. Get the base query from the Look
+                look = looker_sdk.look(look_id=str(look_config['look_id']))
+                if not look or not look.query:
+                    raise Exception(f"Look {look_config['look_id']} or its query could not be fetched.")
+
+                # 2. Create a new query object and add the dynamic filters
+                new_query = look.query
+                if not new_query.filters:
+                    new_query.filters = {}
+                
+                # Merge new filters into the query's existing filters
+                for f_key, f_val in look_filters_for_sdk.items():
+                    new_query.filters[f_key] = f_val
+
+                # 3. Run the modified query using run_inline_query
+                image_bytes = looker_sdk.run_inline_query(
+                    result_format="png",
+                    body=models40.WriteQuery(
+                        model=new_query.model,
+                        view=new_query.view,
+                        fields=new_query.fields,
+                        pivots=new_query.pivots,
+                        filters=new_query.filters,
+                        sorts=new_query.sorts,
+                        limit=new_query.limit
+                    )
+                )
                 base64_image = base64.b64encode(image_bytes).decode('utf-8')
                 image_src_string = f"<img src='data:image/png;base64,{base64_image}' style='max-width:100%; height:auto;'/>"
                 populated_html = populated_html.replace(placeholder_to_replace, image_src_string)
