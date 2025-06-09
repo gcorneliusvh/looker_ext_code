@@ -1156,7 +1156,6 @@ async def execute_report_and_get_url(
         field_configs_map = {fc.field_name: fc for fc in field_configs_list}
         schema_for_table = all_schemas.get(table_placeholder_name, [])
         schema_type_map = {f['name']: f['type'] for f in schema_for_table}
-        # FIX LOCATION 1 (Defensive coding)
         body_field_names_in_order = [f['name'] for f in schema_for_table if (field_configs_map.get(f['name']) or FieldDisplayConfig(field_name=f['name'])).include_in_body]
         
         final_sql = base_sql_query
@@ -1201,8 +1200,8 @@ async def execute_report_and_get_url(
                         subtotal_html = f"<tr class='subtotal-row' style='font-weight: bold; background-color: #f2f2f2;'><td style='text-align: right;' colspan='{len(body_field_names_in_order) - len(agg_fields)}'>Subtotal for {current_group_val}:</td>"
                         for field_name in body_field_names_in_order:
                             if field_name in agg_fields:
+                                print(f"DEBUG: Building subtotal for field: {field_name}") # DEBUG PRINT
                                 result = calculate_aggregate([Decimal(v) for v in subtotal_accumulators[field_name]], agg_fields[field_name])
-                                # FIX LOCATION 2
                                 config = field_configs_map.get(field_name) or FieldDisplayConfig(field_name=field_name)
                                 subtotal_html += f"<td style='text-align: {config.alignment or 'right'};'>{format_value(result, config.number_format, schema_type_map.get(field_name))}</td>"
                         subtotal_html += "</tr>"
@@ -1221,7 +1220,7 @@ async def execute_report_and_get_url(
 
                 row_html_item = "<tr>"
                 for col_idx, header_key in enumerate(body_field_names_in_order):
-                    # FIX LOCATION 1 (Main fix from previous response)
+                    print(f"DEBUG: Processing cell for header: {header_key}") # DEBUG PRINT
                     field_config = field_configs_map.get(header_key) or FieldDisplayConfig(field_name=header_key)
                     cell_value = row_data.get(header_key)
                     formatted_val = format_value(cell_value, field_config.number_format, schema_type_map.get(header_key, "STRING"))
@@ -1239,7 +1238,6 @@ async def execute_report_and_get_url(
                 for field_name in body_field_names_in_order:
                     if field_name in agg_fields:
                         result = calculate_aggregate([Decimal(v) for v in subtotal_accumulators[field_name]], agg_fields[field_name])
-                        # FIX LOCATION 2 (repeated)
                         config = field_configs_map.get(field_name) or FieldDisplayConfig(field_name=field_name)
                         subtotal_html += f"<td style='text-align: {config.alignment or 'right'};'>{format_value(result, config.number_format, schema_type_map.get(field_name))}</td>"
                 subtotal_html += "</tr>"
@@ -1249,8 +1247,8 @@ async def execute_report_and_get_url(
                 gt_html = f"<tr class='grand-total-row' style='font-weight: bold; border-top: 2px solid black; background-color: #e0e0e0;'><td style='text-align: right;' colspan='{len(body_field_names_in_order) - len(agg_fields)}'>Grand Total:</td>"
                 for field_name in body_field_names_in_order:
                     if field_name in agg_fields:
+                        print(f"DEBUG: Building grand total for field: {field_name}") # DEBUG PRINT
                         result = calculate_aggregate([Decimal(v) for v in grand_total_accumulators[field_name]], agg_fields[field_name])
-                        # FIX LOCATION 3
                         config = field_configs_map.get(field_name) or FieldDisplayConfig(field_name=field_name)
                         gt_html += f"<td style='text-align: {config.alignment or 'right'};'>{format_value(result, config.number_format, schema_type_map.get(field_name))}</td>"
                 gt_html += "</tr>"
