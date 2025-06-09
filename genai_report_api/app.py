@@ -1080,6 +1080,7 @@ async def execute_report_and_get_url(
     gcs_client: storage.Client = Depends(get_storage_client_dep),
     looker_sdk: methods40.Looker40SDK = Depends(get_looker_sdk_client_dep)
 ):
+    global config
     report_definition_name = payload.report_definition_name
     filter_criteria_json_str = payload.filter_criteria_json
     print(f"INFO: POST /execute_report for '{report_definition_name}'. Filters JSON: {filter_criteria_json_str}")
