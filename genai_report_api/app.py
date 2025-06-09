@@ -272,18 +272,25 @@ async def lifespan(app_fastapi: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 # --- CORS Configuration ---
+# --- CORS Configuration ---
 NGROK_URL_FROM_ENV = os.getenv("FRONTEND_NGROK_URL")
-LOOKER_INSTANCE_URL_FROM_ENV = os.getenv("LOOKER_INSTANCE_URL")
+# IMPORTANT: Replace the placeholder with your actual Looker instance URL
+LOOKER_INSTANCE_URL_FROM_ENV = os.getenv("LOOKER_INSTANCE_URL", "https://igmprinting.cloud.looker.com") 
 LOOKER_EXTENSION_SANDBOX_HOST = os.getenv("LOOKER_EXTENSION_SANDBOX_HOST","https://83d14716-08b3-4def-bdca-54f4b2af9f19-extensions.cloud.looker.com")
 CLOUD_RUN_SERVICE_URL = "https://looker-ext-code-17837811141.us-central1.run.app"
 
-allowed_origins_list = ["http://localhost:8080", LOOKER_INSTANCE_URL_FROM_ENV, LOOKER_EXTENSION_SANDBOX_HOST, CLOUD_RUN_SERVICE_URL]
+# Add your Looker instance URL to this list
+allowed_origins_list = [
+    "http://localhost:8080", 
+    LOOKER_INSTANCE_URL_FROM_ENV, 
+    LOOKER_EXTENSION_SANDBOX_HOST, 
+    CLOUD_RUN_SERVICE_URL
+]
 if NGROK_URL_FROM_ENV: allowed_origins_list.append(NGROK_URL_FROM_ENV)
 allowed_origins_list = sorted(list(set(o for o in allowed_origins_list if o and o.startswith("http"))))
 if not allowed_origins_list: allowed_origins_list = ["http://localhost:8080"]
 print(f"INFO: CORS allow_origins effectively configured for: {allowed_origins_list}")
 app.add_middleware(CORSMiddleware, allow_origins=allowed_origins_list, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
-
 # --- Helper Functions & Dependency Getters ---
 def _load_system_instruction_from_gcs(client: storage.Client, bucket_name: str, blob_name: str) -> str:
     if not client or not bucket_name: return DEFAULT_FALLBACK_SYSTEM_INSTRUCTION
