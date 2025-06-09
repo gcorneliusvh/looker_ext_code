@@ -176,17 +176,30 @@ function ViewAllReports({ onSelectReportForFiltering }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(executionPayload),
       });
+
       const responseData = response.body;
+
+      // --- NEW: Robust error handling ---
       if (!response.ok) {
-        throw new Error(responseData.detail || `Execute report failed: ${response.status}`);
+        let errorMessage = `Backend returned an error: ${response.status} ${response.statusText}`;
+        
+        // Safely check if a more specific error detail was provided
+        if (responseData && typeof responseData === 'object' && responseData.detail) {
+          errorMessage = responseData.detail;
+        }
+        
+        throw new Error(errorMessage);
       }
+      // --- END of new error handling ---
+
       if (responseData && responseData.report_url_path) {
         const fullReportUrl = BACKEND_BASE_URL + responseData.report_url_path;
         extensionSDK.openBrowserWindow(fullReportUrl, '_blank');
       } else {
-        throw new Error("Failed to get report URL from backend.");
+        throw new Error("Failed to get report URL from backend. The response was successful but malformed.");
       }
     } catch (error) {
+      // This will now display a much clearer error message instead of a TypeError
       console.error("Error executing report:", error);
       alert(`Failed to execute report: ${error.message}`);
     } finally {
@@ -194,7 +207,6 @@ function ViewAllReports({ onSelectReportForFiltering }) {
       closeFilterModal();
     }
   };
-
   const processedReports = useMemo(() => {
     let displayReports = [...reports];
 
