@@ -1226,7 +1226,7 @@ async def execute_report_and_get_url(
                 # -- Generate HTML for the regular data row --
                 row_html_item = "<tr>"
                 for col_idx, header_key in enumerate(body_field_names_in_order):
-                    field_config = field_configs_map.get(header_key)
+                    field_config = field_configs_map.get(header_key) or FieldDisplayConfig(field_name=header_key)
                     cell_value = row_data.get(header_key)
                     formatted_val = format_value(cell_value, field_config.number_format if field_config else None, schema_type_map.get(header_key, "STRING"))
                     
