@@ -286,6 +286,204 @@ app.add_middleware(CORSMiddleware, allow_origins=allowed_origins_list, allow_cre
 
 # --- Helper Functions & Dependency Getters ---
 def _load_system_instruction_from_gcs(client: storage.Client, bucket_name: str, blob_name: str) -> str:
+    if not client or not bucket_name: return DEFAULT_FALLBACK_SYSTEM_INSTRUCTION
+    try:
+        bucket = client.bucket(bucket_name); blob = bucket.blob(blob_name)
+        return blob.download_as_text(encoding='utf-8') if blob.exists() else DEFAULT_FALLBACK_SYSTEM_INSTRUCTION
+    except Exception as e: return DEFAULT_FALLBACK_SYSTEM_INSTRUCTION
+def get_bigquery_client_dep():
+    if not config.bigquery_client: raise HTTPException(status_code=503, detail="BigQuery client not available.")
+    return config.bigquery_client
+def get_storage_client_dep():
+    if not config.storage_client: raise HTTPException(status_code=503, detail="GCS client not available.")
+    return config.storage_client
+def get_vertex_ai_initialized_flag():
+    if not config.vertex_ai_initialized: raise HTTPException(status_code=503, detail="Vertex AI SDK not initialized.")
+_looker_sdk_authenticated = False
+def get_looker_sdk_client_dep():
+    global _looker_sdk_authenticated
+    if not config.looker_sdk_client: raise HTTPException(status_code=503, detail="Looker SDK is not configured. Check environment variables.")
+    if not _looker_sdk_authenticated:
+        try:
+            me = config.looker_sdk_client.me()
+            print(f"INFO: Looker SDK connection verified for user: {me.display_name}")
+            _looker_sdk_authenticated = True
+        except Exception as e: raise HTTPException(status_code=503, detail=f"Looker SDK authentication failed: {e}")
+    return config.looker_sdk_client
+def remove_first_and_last_lines(s: str) -> str:
+    if not s: return ""
+    lines = s.splitlines();
+    if len(lines) >= 2 and lines[0].strip().startswith("```") and lines[-1].strip() == "```": return '\n'.join(lines[1:-1])
+    return s
+def generate_html_from_user_pattern(prompt_text: str, image_bytes: bytes, image_mime_type: str, system_instruction_text: str) -> Union[str, None]:
+    get_vertex_ai_initialized_flag()
+    try:
+        model_instance = GenerativeModel(model_name=config.TARGET_GEMINI_MODEL, system_instruction=[system_instruction_text] if system_instruction_text else None)
+        contents_for_gemini = [Part.from_text(text=prompt_text), Part.from_data(data=image_bytes, mime_type=image_mime_type)]
+        safety_settings_config = { category: HarmBlockThreshold.BLOCK_NONE for category in HarmCategory }
+        generation_config_obj = GenerationConfig(temperature=0.7, top_p=0.95, max_output_tokens=8192, candidate_count=1)
+        response = model_instance.generate_content(contents=contents_for_gemini, generation_config=generation_config_obj, safety_settings=safety_settings_config, stream=False)
+        generated_text_output = "".join([part.text for part in response.candidates[0].content.parts if hasattr(part, 'text')])
+        return remove_first_and_last_lines(generated_text_output)
+    except Exception as e:
+        print(f"ERROR: Vertex AI: GenAI content generation error: {e}"); import traceback; print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Vertex AI content generation failed: {e}")
+def convert_row_to_json_serializable(row: bigquery.Row) -> Dict[str, Any]:
+    output = {};
+    for key, value in row.items():
+        if isinstance(value, Decimal): output[key] = str(value)
+        elif isinstance(value, (datetime.date, datetime.datetime, datetime.time)): output[key] = value.isoformat()
+        else: output[key] = value
+    return output
+def get_bq_param_type_and_value(value_str_param: Any, bq_col_name: str, type_hint: str):
+    # ... This function is unchanged ...
+    return "", ""
+def format_value(value: Any, format_str: Optional[str], field_type_str: str) -> str:
+    # ... This function is unchanged ...
+    return ""
+def calculate_aggregate(data_list: List[Decimal], agg_type_str_param: Optional[str]) -> Decimal:
+    # ... This function is unchanged ...
+    return Decimal('0')
+
+# --- Background Task Function for Report Generation ---
+# In app.py
+
+def generate_and_save_report_assets(
+    payload: ReportDefinitionPayload,
+    bq_client: bigquery.Client,
+    gcs_client: storage.Client,
+):
+    try:
+        report_name = payload.report_name
+        print(f"BACKGROUND_TASK: Starting generation for report: '{report_name}'")
+
+        # --- REFACTORED PROMPT GENERATION FOR MULTIPLE TABLES ---
+        prompt_for_template = payload.prompt
+        all_schemas_for_bq_save = {}
+        
+        # Loop through each data table to perform a dry run and build the prompt
+        for table_config in payload.data_tables:
+            table_placeholder = table_config.table_placeholder_name
+            
+            # Perform a dry run to get the schema for this specific query
+            schema_from_dry_run_list, schema_map_for_prompt = [], {}
+            try:
+                dry_run_job = bq_client.query(table_config.sql_query, job_config=bigquery.QueryJobConfig(dry_run=True, use_query_cache=False))
+                if dry_run_job.schema:
+                    for field in dry_run_job.schema:
+                        field_data = {"name": field.name, "type": str(field.field_type).upper(), "mode": str(field.mode).upper()}
+                        schema_from_dry_run_list.append(field_data)
+                        schema_map_for_prompt[field.name] = field_data["type"]
+                all_schemas_for_bq_save[table_placeholder] = schema_from_dry_run_list
+            except Exception as e:
+                print(f"WARN: Dry run failed for table '{table_placeholder}'. Skipping. Error: {e}")
+                continue # Skip to the next table if one fails
+
+            # Append this table's schema and instructions to the main prompt
+            schema_for_gemini_prompt_str = ", ".join([f"`{f['name']}` (Type: {f['type']})" for f in schema_from_dry_run_list])
+            prompt_for_template += f"\n\n--- Data Table: `{table_placeholder}` ---\n"
+            prompt_for_template += f"Use the exact placeholder `{{{{TABLE_ROWS_{table_placeholder}}}}}` for this table's body rows.\n"
+            prompt_for_template += f"Schema: {schema_for_gemini_prompt_str}\n"
+
+            if table_config.field_display_configs:
+                prompt_for_template += "Field Display & Summary Instructions:\n"
+                for config_item in table_config.field_display_configs:
+                    style_hints = [s for s in [f"align: {config_item.alignment}" if config_item.alignment else "", f"format: {config_item.number_format}" if config_item.number_format else ""] if s]
+                    field_info = f"- `{config_item.field_name}`"
+                    if style_hints: field_info += f" (Styling: {'; '.join(style_hints)})"
+                    # Add other instructions as needed for subtotals, etc.
+                    prompt_for_template += f"{field_info}\n"
+            prompt_for_template += "--- End Data Table ---"
+        # --- END OF REFACTORED PROMPT GENERATION ---
+
+        if payload.look_configs:
+            prompt_for_template += "\n\n--- Chart Image Placeholders ---\nPlease include placeholders for the following charts where you see fit in the layout. Use these exact placeholder names:\n"
+            for look_config in payload.look_configs:
+                prompt_for_template += f"- `{{{{{look_config.placeholder_name}}}}}`\n"
+            prompt_for_template += "--- End Chart Image Placeholders ---"
+        
+        prompt_for_template += """\n\n--- HTML Template Generation Guidelines (Final Reminder) ---\n1. Output ONLY the raw HTML code. No descriptions, no explanations, no markdown like ```html ... ```.\n2. Start with `<!DOCTYPE html>` or `<html>` and end with `</html>`.\n3. CRITICAL: ALL placeholders for dynamic data MUST use double curly braces, e.g., `{{YourPlaceholderKey}}`."""
+        
+        img_response = httpx.get(payload.image_url, timeout=180.0)
+        img_response.raise_for_status()
+        image_bytes_data, image_mime_type_data = img_response.content, img_response.headers.get("Content-Type", "application/octet-stream").lower()
+
+        html_template_content = generate_html_from_user_pattern(prompt_text=prompt_for_template, image_bytes=image_bytes_data, image_mime_type=image_mime_type_data, system_instruction_text=config.default_system_instruction_text)
+        if not html_template_content or not html_template_content.strip():
+            html_template_content = "<html><body><p>Error: AI failed to generate valid HTML.</p></body></html>"
+
+        report_gcs_path_safe = report_name.replace(" ", "_").replace("/", "_").lower()
+        base_gcs_folder = f"report_templates/{report_gcs_path_safe}"
+        versioned_template_gcs_path_str = f"{base_gcs_folder}/template_v1.html"
+        
+        bucket = gcs_client.bucket(config.GCS_BUCKET_NAME)
+        bucket.blob(versioned_template_gcs_path_str).upload_from_string(html_template_content, content_type='text/html; charset=utf-8')
+        
+        # --- REFACTORED BIGQUERY SAVE LOGIC ---
+        user_attribute_mappings_json_str = json.dumps(payload.user_attribute_mappings or {})
+        
+        # Convert new data structures to JSON strings to save in BigQuery
+        data_tables_json_to_save = json.dumps([dt.model_dump() for dt in payload.data_tables], indent=2)
+        schema_json_to_save = json.dumps(all_schemas_for_bq_save, indent=2)
+        
+        look_configs_json_to_save = json.dumps([lc.model_dump() for lc in payload.look_configs], indent=2) if payload.look_configs else "[]"
+        calculation_row_configs_json_to_save = json.dumps([crc.model_dump(exclude_unset=True) for crc in payload.calculation_row_configs], indent=2) if payload.calculation_row_configs else "[]"
+        subtotal_configs_json_to_save = json.dumps([stc.model_dump() for stc in payload.subtotal_configs], indent=2) if payload.subtotal_configs else "[]"
+
+        table_id = f"`{config.gcp_project_id}.report_printing.report_list`"
+        # Modified MERGE statement to use new JSON fields
+        merge_sql = f"""
+        MERGE {table_id} T
+        USING (SELECT @report_name AS ReportName) S ON T.ReportName = S.ReportName
+        WHEN NOT MATCHED THEN
+          INSERT (ReportName, Prompt, SQL, ScreenshotURL, LookConfigsJSON, TemplateURL, LatestTemplateVersion, BaseQuerySchemaJSON, FieldDisplayConfigsJSON, CalculationRowConfigsJSON, SubtotalConfigsJSON, UserAttributeMappingsJSON, CreatedTimestamp, LastGeneratedTimestamp)
+          VALUES(@report_name, @prompt, @data_tables_json, @image_url, @look_configs_json, @template_gcs_path, 1, @schema_json, @field_display_configs_json, @calculation_row_configs_json, @subtotal_configs_json, @user_attribute_mappings_json, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP())
+        WHEN MATCHED THEN
+          UPDATE SET Prompt = @prompt, SQL = @data_tables_json, ScreenshotURL = @image_url, LookConfigsJSON = @look_configs_json, TemplateURL = @template_gcs_path, LatestTemplateVersion = 1, BaseQuerySchemaJSON = @schema_json, FieldDisplayConfigsJSON = @field_display_configs_json, CalculationRowConfigsJSON = @calculation_row_configs_json, SubtotalConfigsJSON = @subtotal_configs_json, UserAttributeMappingsJSON = @user_attribute_mappings_json, LastGeneratedTimestamp = CURRENT_TIMESTAMP()
+        """
+
+        # Note: FieldDisplayConfigsJSON is now a legacy field, the configs are inside the SQL (data_tables_json) field.
+        # We'll leave it for now to avoid breaking the query, but it's no longer the source of truth.
+        
+        merge_params = [
+            ScalarQueryParameter("report_name", "STRING", report_name),
+            ScalarQueryParameter("prompt", "STRING", payload.prompt),
+            ScalarQueryParameter("data_tables_json", "STRING", data_tables_json_to_save), # Use new JSON string
+            ScalarQueryParameter("image_url", "STRING", payload.image_url),
+            ScalarQueryParameter("look_configs_json", "STRING", look_configs_json_to_save),
+            ScalarQueryParameter("template_gcs_path", "STRING", f"gs://{config.GCS_BUCKET_NAME}/{versioned_template_gcs_path_str}"),
+            ScalarQueryParameter("schema_json", "STRING", schema_json_to_save),
+            ScalarQueryParameter("field_display_configs_json", "STRING", "[]"), # Saving empty array to legacy field
+            ScalarQueryParameter("calculation_row_configs_json", "STRING", calculation_row_configs_json_to_save),
+            ScalarQueryParameter("subtotal_configs_json", "STRING", subtotal_configs_json_to_save),
+            ScalarQueryParameter("user_attribute_mappings_json", "STRING", user_attribute_mappings_json_str),
+        ]
+        bq_client.query(merge_sql, job_config=bigquery.QueryJobConfig(query_parameters=merge_params)).result()
+        # --- END OF REFACTORED BIGQUERY SAVE LOGIC ---
+        
+        print(f"BACKGROUND_TASK: Finished generation for report: '{report_name}'")
+
+    except Exception as e:
+        print(f"FATAL BACKGROUND_TASK ERROR for '{payload.report_name}': {e}")
+        import traceback
+        traceback.print_exc()
+
+
+# --- CORS Configuration ---
+NGROK_URL_FROM_ENV = os.getenv("FRONTEND_NGROK_URL")
+LOOKER_INSTANCE_URL_FROM_ENV = os.getenv("LOOKER_INSTANCE_URL")
+LOOKER_EXTENSION_SANDBOX_HOST = os.getenv("LOOKER_EXTENSION_SANDBOX_HOST","https://83d14716-08b3-4def-bdca-54f4b2af9f19-extensions.cloud.looker.com")
+CLOUD_RUN_SERVICE_URL = "https://looker-ext-code-17837811141.us-central1.run.app"
+
+allowed_origins_list = ["http://localhost:8080", LOOKER_INSTANCE_URL_FROM_ENV, LOOKER_EXTENSION_SANDBOX_HOST, CLOUD_RUN_SERVICE_URL]
+if NGROK_URL_FROM_ENV: allowed_origins_list.append(NGROK_URL_FROM_ENV)
+allowed_origins_list = sorted(list(set(o for o in allowed_origins_list if o and o.startswith("http"))))
+if not allowed_origins_list: allowed_origins_list = ["http://localhost:8080"]
+print(f"INFO: CORS allow_origins effectively configured for: {allowed_origins_list}")
+app.add_middleware(CORSMiddleware, allow_origins=allowed_origins_list, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
+# --- Helper Functions & Dependency Getters ---
+def _load_system_instruction_from_gcs(client: storage.Client, bucket_name: str, blob_name: str) -> str:
     if not client or not bucket_name:
         print(f"WARN: GCS client/bucket not provided. Using fallback system instruction.")
         return DEFAULT_FALLBACK_SYSTEM_INSTRUCTION
@@ -349,7 +547,7 @@ def generate_html_from_user_pattern(
         prompt_part = Part.from_text(text=prompt_text)
         contents_for_gemini = [prompt_part, image_part]
         safety_settings_config = { category: HarmBlockThreshold.BLOCK_NONE for category in HarmCategory }
-        generation_config_obj = GenerationConfig(temperature=0.7, top_p=0.95, max_output_tokens=8192, candidate_count=1)
+        generation_config_obj = GenerationConfig(temperature=0.7, top_p=0.95, max_output_tokens=65535, candidate_count=1)
         response = model_instance.generate_content(contents=contents_for_gemini, generation_config=generation_config_obj, safety_settings=safety_settings_config, stream=False)
         generated_text_output = ""
         if response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
@@ -456,6 +654,7 @@ def calculate_aggregate(data_list: List[Decimal], agg_type_str_param: Optional[s
     return Decimal('0')
 
 # --- Background Task Function for Report Generation ---
+
 def generate_and_save_report_assets(
     payload: ReportDefinitionPayload,
     bq_client: bigquery.Client,
@@ -465,14 +664,18 @@ def generate_and_save_report_assets(
         report_name = payload.report_name
         print(f"BACKGROUND_TASK: Starting generation for report: '{report_name}'")
 
+        # --- REFACTORED PROMPT GENERATION FOR MULTIPLE TABLES ---
         prompt_for_template = payload.prompt
         all_schemas_for_bq_save = {}
         
+        # Loop through each data table to perform a dry run and build the prompt
         for table_config in payload.data_tables:
             table_placeholder = table_config.table_placeholder_name
             
+            # Perform a dry run to get the schema for this specific query
             schema_from_dry_run_list = []
             try:
+                # Use table_config.sql_query, NOT payload.sql_query
                 dry_run_job = bq_client.query(table_config.sql_query, job_config=bigquery.QueryJobConfig(dry_run=True, use_query_cache=False))
                 if dry_run_job.schema:
                     for field in dry_run_job.schema:
@@ -481,8 +684,9 @@ def generate_and_save_report_assets(
                 all_schemas_for_bq_save[table_placeholder] = schema_from_dry_run_list
             except Exception as e:
                 print(f"WARN: Dry run failed for table '{table_placeholder}'. Skipping. Error: {e}")
-                continue
+                continue # Skip to the next table if one fails
 
+            # Append this table's schema and instructions to the main prompt
             schema_for_gemini_prompt_str = ", ".join([f"`{f['name']}` (Type: {f['type']})" for f in schema_from_dry_run_list])
             prompt_for_template += f"\n\n--- Data Table: `{table_placeholder}` ---\n"
             prompt_for_template += f"Use the exact placeholder `{{{{TABLE_ROWS_{table_placeholder}}}}}` for this table's body rows.\n"
@@ -496,6 +700,7 @@ def generate_and_save_report_assets(
                     if style_hints: field_info += f" (Styling: {'; '.join(style_hints)})"
                     prompt_for_template += f"{field_info}\n"
             prompt_for_template += "--- End Data Table ---"
+        # --- END OF REFACTORED PROMPT GENERATION ---
 
         if payload.look_configs:
             prompt_for_template += "\n\n--- Chart Image Placeholders ---\nPlease include placeholders for the following charts where you see fit in the layout. Use these exact placeholder names:\n"
@@ -518,6 +723,7 @@ def generate_and_save_report_assets(
         bucket = gcs_client.bucket(config.GCS_BUCKET_NAME)
         bucket.blob(versioned_template_gcs_path_str).upload_from_string(html_template_content, content_type='text/html; charset=utf-8')
         
+        # --- REFACTORED BIGQUERY SAVE LOGIC ---
         user_attribute_mappings_json_str = json.dumps(payload.user_attribute_mappings or {})
         
         data_tables_json_to_save = json.dumps([dt.model_dump() for dt in payload.data_tables], indent=2)
@@ -525,34 +731,35 @@ def generate_and_save_report_assets(
         look_configs_json_to_save = json.dumps([lc.model_dump() for lc in payload.look_configs], indent=2) if payload.look_configs else "[]"
         calculation_row_configs_json_to_save = json.dumps([crc.model_dump(exclude_unset=True) for crc in payload.calculation_row_configs], indent=2) if payload.calculation_row_configs else "[]"
         subtotal_configs_json_to_save = json.dumps([stc.model_dump() for stc in payload.subtotal_configs], indent=2) if payload.subtotal_configs else "[]"
-        filter_configs_json_to_save = json.dumps([fc.model_dump() for fc in payload.filter_configs], indent=2)
 
         table_id = f"`{config.gcp_project_id}.report_printing.report_list`"
         
+        # Use @data_tables_json instead of @sql_query
         merge_sql = f"""
         MERGE {table_id} T
         USING (SELECT @report_name AS ReportName) S ON T.ReportName = S.ReportName
         WHEN NOT MATCHED THEN
-          INSERT (ReportName, Prompt, SQL, ScreenshotURL, LookConfigsJSON, FilterConfigsJSON, TemplateURL, LatestTemplateVersion, BaseQuerySchemaJSON, FieldDisplayConfigsJSON, CalculationRowConfigsJSON, SubtotalConfigsJSON, UserAttributeMappingsJSON, CreatedTimestamp, LastGeneratedTimestamp)
-          VALUES(@report_name, @prompt, @data_tables_json, @image_url, @look_configs_json, @filter_configs_json, @template_gcs_path, 1, @schema_json, '[]', @calculation_row_configs_json, @subtotal_configs_json, @user_attribute_mappings_json, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP())
+          INSERT (ReportName, Prompt, SQL, ScreenshotURL, LookConfigsJSON, TemplateURL, LatestTemplateVersion, BaseQuerySchemaJSON, FieldDisplayConfigsJSON, CalculationRowConfigsJSON, SubtotalConfigsJSON, UserAttributeMappingsJSON, CreatedTimestamp, LastGeneratedTimestamp)
+          VALUES(@report_name, @prompt, @data_tables_json, @image_url, @look_configs_json, @template_gcs_path, 1, @schema_json, @field_display_configs_json, @calculation_row_configs_json, @subtotal_configs_json, @user_attribute_mappings_json, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP())
         WHEN MATCHED THEN
-          UPDATE SET Prompt = @prompt, SQL = @data_tables_json, ScreenshotURL = @image_url, LookConfigsJSON = @look_configs_json, FilterConfigsJSON = @filter_configs_json, TemplateURL = @template_gcs_path, LatestTemplateVersion = 1, BaseQuerySchemaJSON = @schema_json, FieldDisplayConfigsJSON = '[]', CalculationRowConfigsJSON = @calculation_row_configs_json, SubtotalConfigsJSON = @subtotal_configs_json, UserAttributeMappingsJSON = @user_attribute_mappings_json, LastGeneratedTimestamp = CURRENT_TIMESTAMP()
+          UPDATE SET Prompt = @prompt, SQL = @data_tables_json, ScreenshotURL = @image_url, LookConfigsJSON = @look_configs_json, TemplateURL = @template_gcs_path, LatestTemplateVersion = 1, BaseQuerySchemaJSON = @schema_json, FieldDisplayConfigsJSON = @field_display_configs_json, CalculationRowConfigsJSON = @calculation_row_configs_json, SubtotalConfigsJSON = @subtotal_configs_json, UserAttributeMappingsJSON = @user_attribute_mappings_json, LastGeneratedTimestamp = CURRENT_TIMESTAMP()
         """
         
         merge_params = [
             ScalarQueryParameter("report_name", "STRING", report_name),
             ScalarQueryParameter("prompt", "STRING", payload.prompt),
-            ScalarQueryParameter("data_tables_json", "STRING", data_tables_json_to_save),
+            ScalarQueryParameter("data_tables_json", "STRING", data_tables_json_to_save), # Use new JSON string for SQL column
             ScalarQueryParameter("image_url", "STRING", payload.image_url),
             ScalarQueryParameter("look_configs_json", "STRING", look_configs_json_to_save),
-            ScalarQueryParameter("filter_configs_json", "STRING", filter_configs_json_to_save),
             ScalarQueryParameter("template_gcs_path", "STRING", f"gs://{config.GCS_BUCKET_NAME}/{versioned_template_gcs_path_str}"),
             ScalarQueryParameter("schema_json", "STRING", schema_json_to_save),
+            ScalarQueryParameter("field_display_configs_json", "STRING", "[]"), # Saving empty array to legacy field
             ScalarQueryParameter("calculation_row_configs_json", "STRING", calculation_row_configs_json_to_save),
             ScalarQueryParameter("subtotal_configs_json", "STRING", subtotal_configs_json_to_save),
             ScalarQueryParameter("user_attribute_mappings_json", "STRING", user_attribute_mappings_json_str),
         ]
         bq_client.query(merge_sql, job_config=bigquery.QueryJobConfig(query_parameters=merge_params)).result()
+        # --- END OF REFACTORED BIGQUERY SAVE LOGIC ---
         
         print(f"BACKGROUND_TASK: Finished generation for report: '{report_name}'")
 
@@ -602,27 +809,17 @@ async def discover_template_placeholders(
     gcs_client: storage.Client = Depends(get_storage_client_dep),
     bq_client: bigquery.Client = Depends(get_bigquery_client_dep)
 ):
-    template_gcs_path: Optional[str] = None; calc_row_configs_json_str: Optional[str] = None
-    data_tables_json_str: Optional[str] = None
-
-    query_def_sql = f"SELECT TemplateURL, SQL, CalculationRowConfigsJSON FROM `{config.gcp_project_id}.report_printing.report_list` WHERE ReportName = @report_name_param"
+    template_gcs_path: Optional[str] = None; field_configs_json_str: Optional[str] = None; calc_row_configs_json_str: Optional[str] = None
+    query_def_sql = f"SELECT TemplateURL, FieldDisplayConfigsJSON, CalculationRowConfigsJSON FROM `{config.gcp_project_id}.report_printing.report_list` WHERE ReportName = @report_name_param"
     def_params = [ScalarQueryParameter("report_name_param", "STRING", report_name)]
     try:
         results = list(bq_client.query(query_def_sql, job_config=bigquery.QueryJobConfig(query_parameters=def_params)).result())
-        if not results: return DiscoverPlaceholdersResponse(report_name=report_name, placeholders=[], template_found=False, error_message=f"Definition not found for '{report_name}'.")
-        
-        row = results[0]
-        template_gcs_path = row.get("TemplateURL")
-        data_tables_json_str = row.get("SQL")
-        calc_row_configs_json_str = row.get("CalculationRowConfigsJSON")
-
-        if not template_gcs_path:
-             return DiscoverPlaceholdersResponse(report_name=report_name, placeholders=[], template_found=False, error_message=f"TemplateURL not found for '{report_name}'.")
-
+        if results and results[0].get("TemplateURL"):
+            template_gcs_path = results[0].get("TemplateURL"); field_configs_json_str = results[0].get("FieldDisplayConfigsJSON"); calc_row_configs_json_str = results[0].get("CalculationRowConfigsJSON")
+        else: return DiscoverPlaceholdersResponse(report_name=report_name, placeholders=[], template_found=False, error_message=f"Definition or TemplateURL not found for '{report_name}'.")
     except Exception as e: return DiscoverPlaceholdersResponse(report_name=report_name, placeholders=[], template_found=False, error_message=f"Error fetching report definition details: {str(e)}")
 
-    if not template_gcs_path.startswith("gs://"): return DiscoverPlaceholdersResponse(report_name=report_name, placeholders=[], template_found=False, error_message=f"Invalid GCS TemplateURL: {template_gcs_path}")
-    
+    if not template_gcs_path or not template_gcs_path.startswith("gs://"): return DiscoverPlaceholdersResponse(report_name=report_name, placeholders=[], template_found=False, error_message=f"Invalid GCS TemplateURL: {template_gcs_path}")
     html_content: str = ""
     try:
         path_parts = template_gcs_path.replace("gs://", "").split("/", 1); bucket_name, blob_name = path_parts[0], path_parts[1]
@@ -631,16 +828,10 @@ async def discover_template_placeholders(
         html_content = blob.download_as_text(encoding='utf-8')
     except Exception as e: return DiscoverPlaceholdersResponse(report_name=report_name, placeholders=[], template_found=False, error_message=f"Error loading template from GCS: {str(e)}")
     
-    all_field_display_configs: List[FieldDisplayConfig] = []
-    if data_tables_json_str:
-        try:
-            data_tables = json.loads(data_tables_json_str)
-            for table_data in data_tables:
-                for config_item in table_data.get('field_display_configs', []):
-                    all_field_display_configs.append(FieldDisplayConfig(**config_item))
-        except (json.JSONDecodeError, TypeError) as e:
-            print(f"WARN: Could not parse field configs from SQL JSON for '{report_name}' in discover: {e}")
-
+    field_display_configs_for_discovery: List[FieldDisplayConfig] = []
+    if field_configs_json_str:
+        try: field_display_configs_for_discovery = [FieldDisplayConfig(**item) for item in json.loads(field_configs_json_str)]
+        except (json.JSONDecodeError, TypeError) as e: print(f"WARN: Could not parse FieldDisplayConfigsJSON for '{report_name}' in discover: {e}")
     calculation_rows_configs_for_discovery: List[CalculationRowConfig] = []
     if calc_row_configs_json_str:
         try: calculation_rows_configs_for_discovery = [CalculationRowConfig(**item) for item in json.loads(calc_row_configs_json_str)]
@@ -648,21 +839,16 @@ async def discover_template_placeholders(
     
     discovered_placeholders_list: List[DiscoveredPlaceholderInfo] = []
     placeholder_keys_found = set(re.findall(r"\{\{([^{}]+?)\}\}", html_content, re.DOTALL))
-    
     for key_in_tag_raw in placeholder_keys_found:
         key_in_tag_content = key_in_tag_raw.strip()
         original_full_tag = f"{{{{{key_in_tag_content}}}}}"
         if not key_in_tag_content: continue
-        
         status = "unrecognized"; suggestion = None
-        
-        # Check for table row placeholders
-        if key_in_tag_content.startswith("TABLE_ROWS_"):
-            status = "standard_table_rows"
-            suggestion = PlaceholderMappingSuggestion(map_to_type="standard_placeholder", map_to_value=key_in_tag_content)
+        if key_in_tag_content == "TABLE_ROWS_HTML_PLACEHOLDER":
+            status = "standard_table_rows"; suggestion = PlaceholderMappingSuggestion(map_to_type="standard_placeholder", map_to_value=key_in_tag_content)
         else:
             matched_by_config = False
-            for fd_config in all_field_display_configs:
+            for fd_config in field_display_configs_for_discovery:
                 if key_in_tag_content == f"TOP_{fd_config.field_name}" and fd_config.include_at_top:
                     status = "auto_matched_top"; suggestion = PlaceholderMappingSuggestion(map_to_type="schema_field", map_to_value=fd_config.field_name, usage_as="TOP"); matched_by_config = True; break
                 if key_in_tag_content == f"HEADER_{fd_config.field_name}" and fd_config.include_in_header:
@@ -671,9 +857,7 @@ async def discover_template_placeholders(
                 for calc_config in calculation_rows_configs_for_discovery:
                     if key_in_tag_content == calc_config.values_placeholder_name:
                         status = "auto_matched_calc_row"; suggestion = PlaceholderMappingSuggestion(map_to_type="calculation_row_placeholder", map_to_value=key_in_tag_content); break
-        
         discovered_placeholders_list.append(DiscoveredPlaceholderInfo(original_tag=original_full_tag,key_in_tag=key_in_tag_content,status=status,suggestion=suggestion))
-
     unique_placeholders_dict = {p.original_tag: p for p in discovered_placeholders_list}
     final_placeholders = list(unique_placeholders_dict.values())
     final_placeholders.sort(key=lambda p: (p.status, p.key_in_tag))
@@ -687,8 +871,13 @@ async def upsert_report_definition(
     gcs_client: storage.Client = Depends(get_storage_client_dep)
 ):
     print(f"--- Backend Payload Received ---\n{payload.model_dump_json(indent=2)}")
+    """
+    Accepts a report definition, validates it quickly, and schedules the slow
+    AI generation and asset saving to run in the background. Returns immediately.
+    """
     print(f"INFO: Submission received for report '{payload.report_name}'. Scheduling for background generation.")
     
+    # Add the slow work to a background task, passing all necessary dependencies
     background_tasks.add_task(
         generate_and_save_report_assets,
         payload=payload,
@@ -696,6 +885,7 @@ async def upsert_report_definition(
         gcs_client=gcs_client
     )
     
+    # Return an immediate response to the user
     return {"message": f"Report definition '{payload.report_name}' accepted and is being generated in the background."}
 
 @app.get("/report_definitions", response_model=List[ReportDefinitionListItem])
@@ -1010,7 +1200,7 @@ async def execute_report_and_get_url(
                         subtotal_html = f"<tr class='subtotal-row' style='font-weight: bold; background-color: #f2f2f2;'><td style='text-align: right;' colspan='{len(body_field_names_in_order) - len(agg_fields)}'>Subtotal for {current_group_val}:</td>"
                         for field_name in body_field_names_in_order:
                             if field_name in agg_fields:
-                                print(f"DEBUG: Building subtotal for field: {field_name}")
+                                print(f"DEBUG: Building subtotal for field: {field_name}") # DEBUG PRINT
                                 result = calculate_aggregate([Decimal(v) for v in subtotal_accumulators[field_name]], agg_fields[field_name])
                                 config = field_configs_map.get(field_name) or FieldDisplayConfig(field_name=field_name)
                                 subtotal_html += f"<td style='text-align: {config.alignment or 'right'};'>{format_value(result, config.number_format, schema_type_map.get(field_name))}</td>"
@@ -1030,7 +1220,7 @@ async def execute_report_and_get_url(
 
                 row_html_item = "<tr>"
                 for col_idx, header_key in enumerate(body_field_names_in_order):
-                    print(f"DEBUG: Processing cell for header: {header_key}")
+                    print(f"DEBUG: Processing cell for header: {header_key}") # DEBUG PRINT
                     field_config = field_configs_map.get(header_key) or FieldDisplayConfig(field_name=header_key)
                     cell_value = row_data.get(header_key)
                     formatted_val = format_value(cell_value, field_config.number_format, schema_type_map.get(header_key, "STRING"))
@@ -1057,7 +1247,7 @@ async def execute_report_and_get_url(
                 gt_html = f"<tr class='grand-total-row' style='font-weight: bold; border-top: 2px solid black; background-color: #e0e0e0;'><td style='text-align: right;' colspan='{len(body_field_names_in_order) - len(agg_fields)}'>Grand Total:</td>"
                 for field_name in body_field_names_in_order:
                     if field_name in agg_fields:
-                        print(f"DEBUG: Building grand total for field: {field_name}")
+                        print(f"DEBUG: Building grand total for field: {field_name}") # DEBUG PRINT
                         result = calculate_aggregate([Decimal(v) for v in grand_total_accumulators[field_name]], agg_fields[field_name])
                         config = field_configs_map.get(field_name) or FieldDisplayConfig(field_name=field_name)
                         gt_html += f"<td style='text-align: {config.alignment or 'right'};'>{format_value(result, config.number_format, schema_type_map.get(field_name))}</td>"
@@ -1078,7 +1268,7 @@ async def execute_report_and_get_url(
 
         placeholder_to_replace = f"{{{{TABLE_ROWS_{table_placeholder_name}}}}}"
         populated_html = populated_html.replace(placeholder_to_replace, table_rows_html_str)
-
+#Small Change
     if look_configs_json:
         look_configs = json.loads(look_configs_json)
         user_filter_values = looker_filters_payload_exec.get("dynamic_filters", {})
@@ -1117,6 +1307,7 @@ async def execute_report_and_get_url(
         
     report_url_path = f"/view_generated_report/{report_id}"
     return JSONResponse(content={"report_url_path": report_url_path})
+
 
 @app.get("/view_generated_report/{report_id}", response_class=HTMLResponse)
 async def view_generated_report_endpoint(
