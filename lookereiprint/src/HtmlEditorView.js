@@ -167,7 +167,7 @@ function HtmlEditorView({ report, onComplete }) {
                         />
                      )}
                 </FlexItem>
-            </Flex>
+            </Flex> 
         </Box>
     );
 }
