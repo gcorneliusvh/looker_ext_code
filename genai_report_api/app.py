@@ -39,7 +39,7 @@ class AppConfig:
     looker_sdk_client: Union[methods40.Looker40SDK, None] = None
     GCS_BUCKET_NAME: str = os.getenv("GCS_BUCKET_NAME", "")
     GCS_SYSTEM_INSTRUCTION_PATH: str = os.getenv("GCS_SYSTEM_INSTRUCTION_PATH", "system_instructions/default_system_instruction.txt")
-    TARGET_GEMINI_MODEL: str = "gemini-2.5-pro-preview-05-06"
+    TARGET_GEMINI_MODEL: str = "gemini-2.5-flash-preview-05-20"
     GCS_GENERATED_REPORTS_PREFIX: str = "generated_reports_output/"
 
 config = AppConfig()

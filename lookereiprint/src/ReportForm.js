@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useContext } from 'react';
+// src/ReportForm.js
+import React, { useState, useEffect, useMemo, useContext } from 'react'; // useMemo imported
 import styled from 'styled-components';
 import { ExtensionContext } from '@looker/extension-sdk-react';
 import {
@@ -17,47 +18,23 @@ import {
     Tab,
     TabPanels,
     TabPanel,
+    ButtonTransparent,
 } from '@looker/components';
 import { Add, Delete } from '@styled-icons/material';
 import { v4 as uuidv4 } from 'uuid';
-
 import FieldDisplayConfigurator from './FieldDisplayConfigurator';
 
-// --- Styled Components ---
+// --- Styled Components (unchanged) ---
 const FormWrapper = styled.div`
   padding: 25px;
   font-family: Arial, sans-serif;
   max-width: 800px;
   margin: 0 auto;
-`;
-
-const FormGroup = styled.div`
-  margin-bottom: 20px;
-`;
-
-const Label = styled.label`
-  display: block;
-  margin-bottom: 8px;
-  font-weight: bold;
-  font-size: 14px;
-`;
-
-const Input = styled.input`
   width: 100%;
-  padding: 10px;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  box-sizing: border-box;
-  font-size: 16px;
 `;
-
-const Description = styled.p`
-  font-size: 0.85em;
-  color: #666;
-  margin-top: 5px;
-  margin-bottom: 0;
-`;
-
+const FormGroup = styled.div` margin-bottom: 20px; `;
+const Label = styled.label` display: block; margin-bottom: 8px; font-weight: bold; font-size: 14px; `;
+const Description = styled.p` font-size: 0.85em; color: #666; margin-top: 5px; margin-bottom: 0; `;
 const Button = styled.button`
   width: 100%;
   background-color: #4285F4;
@@ -70,15 +47,9 @@ const Button = styled.button`
   font-weight: bold;
   transition: background-color 0.2s ease-in-out;
 
-  &:hover {
-    background-color: #357ae8;
-  }
-  &:disabled {
-    background-color: #ccc;
-    cursor: not-allowed;
-  }
+  &:hover { background-color: #357ae8; }
+  &:disabled { background-color: #ccc; cursor: not-allowed; }
 `;
-
 const DynamicSection = styled(Box)`
   border: 1px solid ${({ theme }) => theme.colors.ui2};
   border-radius: ${({ theme }) => theme.radii.medium};
@@ -87,36 +58,73 @@ const DynamicSection = styled(Box)`
 `;
 // --- End of Styled Components ---
 
-function ReportForm() {
-  // All state remains at the top level, shared across all tabs
+const getInitialDataTables = () => ([{ id: uuidv4(), placeholderName: '', sql_query: '', fieldConfigs: [] }]);
+
+function ReportForm({ reportToEdit, onComplete }) {
   const [reportName, setReportName] = useState('');
   const [imageUrl, setImageUrl] = useState('');
   const [promptText, setPromptText] = useState('');
   const [userAttributeMappings, setUserAttributeMappings] = useState('');
-  const [dataTables, setDataTables] = useState([
-    { id: uuidv4(), placeholderName: '', sql: '', fieldConfigs: [] }
-  ]);
+  const [dataTables, setDataTables] = useState(getInitialDataTables());
   const [lookConfigs, setLookConfigs] = useState([]);
   const [filterConfigs, setFilterConfigs] = useState([]);
+  
   const [isFieldConfigModalOpen, setIsFieldConfigModalOpen] = useState(false);
   const [configuringTableId, setConfiguringTableId] = useState(null);
   const [currentSchemaForConfig, setCurrentSchemaForConfig] = useState([]);
-  const [calculationRows, setCalculationRows] = useState([]);
+  
   const [dryRunLoading, setDryRunLoading] = useState(false);
   const [dryRunError, setDryRunError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitStatus, setSubmitStatus] = useState('');
-  const { extensionSDK } = useContext(ExtensionContext);
-  const [sdkReady, setSdkReady] = useState(false);
 
+  const { extensionSDK } = useContext(ExtensionContext);
   const backendBaseUrl = 'https://looker-ext-code-17837811141.us-central1.run.app';
+  
+  const isEditing = !!reportToEdit;
+
+  // --- NEW: Validation logic ---
+  const isFormValid = useMemo(() => {
+    if (!reportName.trim() || !imageUrl.trim() || !promptText.trim()) {
+      return false;
+    }
+    if (dataTables.length === 0) {
+      return false;
+    }
+    // Check if every data table has both a placeholder and a query
+    return dataTables.every(dt => dt.placeholderName.trim() && dt.sql_query && dt.sql_query.trim());
+  }, [reportName, imageUrl, promptText, dataTables]);
+
+  const resetForm = () => {
+      setReportName('');
+      setImageUrl('');
+      setPromptText('');
+      setUserAttributeMappings('');
+      setDataTables(getInitialDataTables());
+      setLookConfigs([]);
+      setFilterConfigs([]);
+      setSubmitStatus('');
+  };
 
   useEffect(() => {
-    if (extensionSDK) setSdkReady(true);
-  }, [extensionSDK]);
+    if (reportToEdit) {
+        console.log("Populating form with report to edit:", reportToEdit);
+        setReportName(reportToEdit.ReportName || '');
+        setImageUrl(reportToEdit.ScreenshotURL || '');
+        setPromptText(reportToEdit.Prompt || '');
+        setUserAttributeMappings(JSON.stringify(reportToEdit.UserAttributeMappings || {}, null, 2));
+        
+        setDataTables(reportToEdit.DataTables.map(dt => ({ ...dt, id: uuidv4() })) || getInitialDataTables());
+        setLookConfigs(reportToEdit.LookConfigs.map(lc => ({ ...lc, id: uuidv4() })) || []);
+        setFilterConfigs(reportToEdit.FilterConfigs.map(fc => ({ ...fc, id: uuidv4(), targets: fc.targets.map(t => ({...t, id: uuidv4()})) })) || []);
 
-  // All handler functions remain the same
-  const handleAddDataTable = () => setDataTables(prev => [...prev, { id: uuidv4(), placeholderName: '', sql: '', fieldConfigs: [] }]);
+    } else {
+        console.log("Resetting form for new report.");
+        resetForm();
+    }
+  }, [reportToEdit]);
+
+  const handleAddDataTable = () => setDataTables(prev => [...prev, { id: uuidv4(), placeholderName: '', sql_query: '', fieldConfigs: [] }]);
   const handleRemoveDataTable = (id) => setDataTables(prev => prev.filter(t => t.id !== id));
   const handleDataTableChange = (id, fieldName, value) => setDataTables(prev => prev.map(t => t.id === id ? { ...t, [fieldName]: value } : t));
   const handleAddLookConfig = () => setLookConfigs(prev => [...prev, { id: uuidv4(), lookId: '', placeholderName: '' }]);
@@ -129,7 +137,7 @@ function ReportForm() {
   const handleRemoveTarget = (filterId, targetId) => setFilterConfigs(prev => prev.map(f => f.id === filterId ? { ...f, targets: f.targets.filter(t => t.id !== targetId) } : f));
   const handleTargetChange = (filterId, targetId, field, value) => setFilterConfigs(prev => prev.map(f => f.id === filterId ? { ...f, targets: f.targets.map(t => t.id === targetId ? { ...t, [field]: value } : t) } : f));
   const handleDryRunAndConfigure = async (tableId, sqlQuery) => {
-    if (!sqlQuery.trim()) { alert("SQL query for this table cannot be empty."); return; }
+    if (!sqlQuery || !sqlQuery.trim()) { alert("SQL query for this table cannot be empty."); return; }
     setDryRunLoading(true); setDryRunError(''); setConfiguringTableId(tableId);
     try {
       const response = await extensionSDK.fetchProxy(`${backendBaseUrl}/dry_run_sql_for_schema`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sql_query: sqlQuery }) });
@@ -151,18 +159,16 @@ function ReportForm() {
     setSubmitStatus('Submitting definition...');
 
     try {
-      // This will now be caught if the JSON is invalid
       const parsedUserAttributeMappings = JSON.parse(userAttributeMappings || '{}');
-
-      const dataTablesPayload = dataTables.filter(dt => dt.placeholderName && dt.sql).map(dt => ({
-        table_placeholder_name: dt.placeholderName,
-        sql_query: dt.sql,
-        field_display_configs: dt.fieldConfigs
+      
+      const dataTablesPayload = dataTables.filter(dt => dt.placeholderName && dt.sql_query).map(({ id, fieldConfigs, ...rest }) => ({
+        ...rest,
+        field_display_configs: fieldConfigs || [],
       }));
 
-      const looksPayload = lookConfigs.filter(lc => lc.lookId && lc.placeholderName).map(lc => ({
-        look_id: parseInt(lc.lookId, 10),
-        placeholder_name: lc.placeholderName
+      const looksPayload = lookConfigs.filter(lc => lc.lookId && lc.placeholderName).map(({ id, ...rest }) => ({
+        ...rest,
+        look_id: parseInt(rest.lookId, 10),
       }));
 
       const filtersPayload = filterConfigs
@@ -186,7 +192,7 @@ function ReportForm() {
         look_configs: looksPayload,
         filter_configs: filtersPayload,
         user_attribute_mappings: parsedUserAttributeMappings,
-        calculation_row_configs: calculationRows,
+        calculation_row_configs: [],
         subtotal_configs: [],
       };
       
@@ -200,17 +206,16 @@ function ReportForm() {
 
       if (!response.ok) {
         const errorBody = response.body || { detail: `Request failed with status ${response.status}` };
-        throw new Error(errorBody.detail);
+        throw new Error(errorBody.detail || "Unknown error occurred.");
       }
       
-      setSubmitStatus(`Success! Report '${reportName}' submitted for background generation.`);
-      // Reset form
-      setReportName(''); setImageUrl(''); setPromptText(''); setUserAttributeMappings('');
-      setDataTables([{ id: uuidv4(), placeholderName: '', sql: '', fieldConfigs: [] }]);
-      setLookConfigs([]); setFilterConfigs([]);
+      setSubmitStatus(`Success! Report '${reportName}' ${isEditing ? 'updated' : 'submitted'}.`);
+      
+      if (onComplete) {
+          setTimeout(onComplete, 1500);
+      }
 
     } catch (error) {
-      // This will now catch errors from JSON.parse() or the network request
       const errorMessage = `Failed to submit. Please check your inputs, especially the User Attribute Mappings JSON.\n\nError: ${error.message}`;
       setSubmitStatus(errorMessage);
       alert(errorMessage);
@@ -221,7 +226,16 @@ function ReportForm() {
 
   return (
     <FormWrapper>
-      <Heading as="h1" mb="large">Define New GenAI Report</Heading>
+      <Space between>
+        <Heading as="h1" mb="large">
+            {isEditing ? `Edit: ${reportToEdit.ReportName}` : 'Define New GenAI Report'}
+        </Heading>
+        {isEditing && (
+            <ButtonTransparent onClick={resetForm} disabled={isSubmitting}>
+                + Create New Report
+            </ButtonTransparent>
+        )}
+      </Space>
       
       <Tabs>
         <TabList>
@@ -233,11 +247,11 @@ function ReportForm() {
           <TabPanel>
             <FormGroup>
               <Label htmlFor="reportName">Report Definition Name <span style={{color: 'red'}}>*</span></Label>
-              <Input type="text" id="reportName" value={reportName} onChange={(e) => setReportName(e.target.value)} placeholder="e.g., Monthly Sales Performance" disabled={isSubmitting}/>
+              <FieldText id="reportName" value={reportName} onChange={(e) => setReportName(e.target.value)} placeholder="e.g., Monthly Sales Performance" disabled={isSubmitting || isEditing} description={isEditing ? 'Report name cannot be changed.' : ''} />
             </FormGroup>
             <FormGroup>
               <Label htmlFor="imageUrl">Image URL (for styling guidance) <span style={{color: 'red'}}>*</span></Label>
-              <Input type="text" id="imageUrl" value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} placeholder="https://example.com/style_image.jpg" disabled={isSubmitting}/>
+              <FieldText type="text" id="imageUrl" value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} placeholder="https://example.com/style_image.jpg" disabled={isSubmitting}/>
             </FormGroup>
             <FormGroup>
               <Label htmlFor="promptText">Base Prompt for Gemini <span style={{color: 'red'}}>*</span></Label>
@@ -250,8 +264,14 @@ function ReportForm() {
               {dataTables.map((table, index) => (
                 <DynamicSection key={table.id}>
                   <Box display="flex" justifyContent="space-between" alignItems="center"><Heading as="h3" fontSize="medium">Data Table {index + 1}</Heading><IconButton icon={<Delete />} label="Remove Data Table" onClick={() => handleRemoveDataTable(table.id)} disabled={dataTables.length <= 1}/></Box>
-                  <Space><FieldText label="Table Placeholder Name" description="e.g., sales_summary_table" value={table.placeholderName} onChange={(e) => handleDataTableChange(table.id, 'placeholderName', e.target.value)} disabled={isSubmitting}/><LookerButton mt="large" onClick={() => handleDryRunAndConfigure(table.id, table.sql)} disabled={dryRunLoading || isSubmitting || !table.sql.trim()} iconBefore={dryRunLoading && configuringTableId === table.id ? <Spinner size={18}/> : undefined}>Configure Columns</LookerButton></Space>
-                  <Box mt="small"><Label htmlFor={`sql-${table.id}`}>SQL Query <span style={{color: 'red'}}>*</span></Label><LookerTextarea id={`sql-${table.id}`} value={table.sql} onChange={(e) => handleDataTableChange(table.id, 'sql', e.target.value)} rows={6} placeholder="SELECT ..." disabled={isSubmitting}/></Box>
+                  <Space>
+                    <FieldText label="Table Placeholder Name" description="e.g., sales_summary_table" value={table.placeholderName} onChange={(e) => handleDataTableChange(table.id, 'placeholderName', e.target.value)} disabled={isSubmitting}/>
+                    <LookerButton mt="large" onClick={() => handleDryRunAndConfigure(table.id, table.sql_query)} disabled={dryRunLoading || isSubmitting || !table.sql_query || !table.sql_query.trim()} iconBefore={dryRunLoading && configuringTableId === table.id ? <Spinner size={18}/> : undefined}>Configure Columns</LookerButton>
+                  </Space>
+                  <Box mt="small">
+                    <Label htmlFor={`sql-${table.id}`}>SQL Query <span style={{color: 'red'}}>*</span></Label>
+                    <LookerTextarea id={`sql-${table.id}`} value={table.sql_query} onChange={(e) => handleDataTableChange(table.id, 'sql_query', e.target.value)} rows={6} placeholder="SELECT ..." disabled={isSubmitting}/>
+                  </Box>
                 </DynamicSection>
               ))}
               <LookerButton onClick={handleAddDataTable} iconBefore={<Add />} disabled={isSubmitting}>Add Data Table</LookerButton>
@@ -265,7 +285,7 @@ function ReportForm() {
                   <Space><FieldText label="Look ID" value={config.lookId} onChange={(e) => handleLookConfigChange(config.id, 'lookId', e.target.value)} placeholder="e.g., 123" type="number" disabled={isSubmitting}/><FieldText label="Placeholder Name" value={config.placeholderName} onChange={(e) => handleLookConfigChange(config.id, 'placeholderName', e.target.value)} placeholder="e.g., sales_trend_chart" description="Use letters, numbers, underscores" disabled={isSubmitting}/></Space>
                 </DynamicSection>
               ))}
-              <LookerButton onClick={handleAddLookConfig} iconBefore={<Add />}>Add Chart from Look</LookerButton>
+              <LookerButton onClick={handleAddLookConfig} iconBefore={<Add />} disabled={isSubmitting}>Add Chart from Look</LookerButton>
             </FormGroup>
           </TabPanel>
           <TabPanel>
@@ -304,12 +324,15 @@ function ReportForm() {
       <FieldDisplayConfigurator isOpen={isFieldConfigModalOpen} onClose={handleCloseConfigModal} onApply={handleApplyFieldConfigs} schema={currentSchemaForConfig} reportName={reportName} initialConfigs={(configuringTableId && dataTables.find(dt => dt.id === configuringTableId)?.fieldConfigs) || []} />
       
       <FormGroup style={{ marginTop: '30px' }}>
-        <Button onClick={handleSubmitDefinition} disabled={isSubmitting || dryRunLoading}>
-          {isSubmitting ? "Saving Definition..." : "Create/Update Report Definition"}
+        {/* UPDATED: Disabled logic now uses isFormValid */}
+        <Button 
+            onClick={handleSubmitDefinition} 
+            disabled={isSubmitting || dryRunLoading || (!isEditing && !isFormValid)}>
+          {isSubmitting ? "Saving..." : (isEditing ? "Update Report Definition" : "Create Report Definition")}
         </Button>
       </FormGroup>
       
-      {submitStatus && <p style={{color: submitStatus.includes("Error") ? 'red' : 'green'}}>{submitStatus}</p>}
+      {submitStatus && <p style={{color: submitStatus.toLowerCase().includes("error") ? 'red' : 'green'}}>{submitStatus}</p>}
     </FormWrapper>
   );
 }

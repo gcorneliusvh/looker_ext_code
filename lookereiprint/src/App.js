@@ -1,84 +1,78 @@
 // src/App.js
 import React, { useState } from 'react';
-import { ExtensionProvider } from '@looker/extension-sdk-react';
-import { 
-    ComponentsProvider, 
-    Page,        
-    Layout,
-    Aside,        
-    Section,      
-    Heading,      // For content placeholders
-    NavList,      // This was correct
-    ListItem      // <-- CORRECTED: Import ListItem instead of NavItem
-    // You might later import icons from '@looker/icons' e.g. import { Home } from '@looker/icons'
-} from '@looker/components';
 import { hot } from 'react-hot-loader/root';
-
+import { ComponentsProvider, Layout, Page, NavList, ListItem } from '@looker/components';
+import { ExtensionProvider } from '@looker/extension-sdk-react';
 import ReportForm from './ReportForm';
-import ViewAllReports from './ViewAllReports'; // Make sure this is a valid component
-import EditSystemInstructions from './EditSystemInstructions'; // Make sure this is a valid component
+import ViewAllReports from './ViewAllReports';
+import EditSystemInstructions from './EditSystemInstructions';
 
-const VIEWS = {
-  ADD_NEW_REPORT: 'addNewReport',
-  VIEW_ALL_REPORTS: 'viewAllReports',
-  EDIT_SYSTEM_INSTRUCTIONS: 'editSystemInstructions',
-};
+const App = hot(() => {
+    const [activeView, setActiveView] = useState('viewAllReports');
+    const [reportToEdit, setReportToEdit] = useState(null);
 
-export const App = hot(() => {
-  const [activeView, setActiveView] = useState(VIEWS.ADD_NEW_REPORT);
-  console.log("App.js rendering with NavList and ListItem. Active view:", activeView);
+    const handleSelectView = (view) => {
+        // When switching back to the form, if it's not via an "edit" click,
+        // ensure we are in "create new" mode by clearing the reportToEdit state.
+        if (view === 'defineReport' && reportToEdit) {
+           // Keep reportToEdit state if we are already on the define page
+        } else {
+            setReportToEdit(null);
+        }
+        setActiveView(view);
+    };
 
-  const renderView = () => {
-    switch (activeView) {
-      case VIEWS.ADD_NEW_REPORT:
-        return <ReportForm />;
-      case VIEWS.VIEW_ALL_REPORTS:
-        return <ViewAllReports />;
-      case VIEWS.EDIT_SYSTEM_INSTRUCTIONS:
-        return <EditSystemInstructions />;
-      default:
-        return <ReportForm />;
-    }
-  };
+    const handleEditReport = (reportData) => {
+        setReportToEdit(reportData);
+        setActiveView('defineReport');
+    };
 
-  return (
-    <ExtensionProvider>
-      <ComponentsProvider>
-        <Page fixed>
-          <Layout hasAside>
-            <Aside width="220px" borderRight p="small" paddingTop="large">
-              <NavList>
-                <ListItem  // <-- CORRECTED to ListItem
-                  selected={activeView === VIEWS.ADD_NEW_REPORT}
-                  onClick={() => setActiveView(VIEWS.ADD_NEW_REPORT)}
-                  icon={<span>📄</span>} // Placeholder icon, replace with Looker icon later
-                  // Common ListItem props: itemRole="link", description, detail
-                >
-                  Add New Report
-                </ListItem>
-                <ListItem // <-- CORRECTED to ListItem
-                  selected={activeView === VIEWS.VIEW_ALL_REPORTS}
-                  onClick={() => setActiveView(VIEWS.VIEW_ALL_REPORTS)}
-                  icon={<span>📊</span>} // Placeholder icon
-                >
-                  View All Reports
-                </ListItem>
-                <ListItem // <-- CORRECTED to ListItem
-                  selected={activeView === VIEWS.EDIT_SYSTEM_INSTRUCTIONS}
-                  onClick={() => setActiveView(VIEWS.EDIT_SYSTEM_INSTRUCTIONS)}
-                  icon={<span>⚙️</span>} // Placeholder icon
-                >
-                  Edit System Instructions
-                </ListItem>
-              </NavList>
-            </Aside>
+    const renderActiveView = () => {
+        switch (activeView) {
+            case 'defineReport':
+                return <ReportForm reportToEdit={reportToEdit} onComplete={() => handleSelectView('viewAllReports')} />;
+            case 'editSystemInstructions':
+                return <EditSystemInstructions />;
+            case 'viewAllReports':
+            default:
+                return <ViewAllReports onEditReport={handleEditReport} />;
+        }
+    };
 
-            <Section as="main" p="large">
-              {renderView()}
-            </Section>
-          </Layout>
-        </Page>
-      </ComponentsProvider>
-    </ExtensionProvider>
-  );
+    return (
+        <ExtensionProvider>
+            <ComponentsProvider>
+                <Page fixed>
+                    <Layout hasAside>
+                        <NavList>
+                            <ListItem
+                                icon="Dashboard"
+                                selected={activeView === 'viewAllReports'}
+                                onClick={() => handleSelectView('viewAllReports')}
+                            >
+                                View & Run Reports
+                            </ListItem>
+                            <ListItem
+                                icon="Add"
+                                selected={activeView === 'defineReport'}
+                                onClick={() => handleSelectView('defineReport')}
+                            >
+                                {reportToEdit ? 'Edit Report Definition' : 'Add New Report'}
+                            </ListItem>
+                            <ListItem
+                                icon="Settings"
+                                selected={activeView === 'editSystemInstructions'}
+                                onClick={() => handleSelectView('editSystemInstructions')}
+                            >
+                                System Instructions
+                            </ListItem>
+                        </NavList>
+                        {renderActiveView()}
+                    </Layout>
+                </Page>
+            </ComponentsProvider>
+        </ExtensionProvider>
+    );
 });
+
+export { App };
