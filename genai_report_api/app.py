@@ -1330,6 +1330,7 @@ ALL placeholders for dynamic data MUST use double curly braces, e.g., {{{{YourPl
         new_template_gcs_path=f"gs://{bucket_name}/{new_versioned_gcs_path_str}",
         message=f"Template refined to version {new_version_number} and updated successfully."
     )
+# In app.py, replace the existing execute_report_and_get_url function
 
 @app.post("/execute_report")
 async def execute_report_and_get_url(
@@ -1378,7 +1379,7 @@ async def execute_report_and_get_url(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load HTML template: {str(e)}")
 
-    # --- 2. Build Filter Logic ---
+    # --- 2. Build Filter Logic & Replace Filter Placeholders ---
     current_query_params_for_bq_exec = []; param_idx_exec = 0
     base_conditions = []
     try:
@@ -1386,7 +1387,18 @@ async def execute_report_and_get_url(
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=400, detail=f"Invalid JSON for filter_criteria: {str(e)}")
     
-    for filter_key, val_str_list in looker_filters_payload_exec.get("dynamic_filters", {}).items():
+    # --- NEW: Block to replace {{FILTER_...}} placeholders ---
+    user_filter_values = looker_filters_payload_exec.get("dynamic_filters", {})
+    for f_config in parsed_filter_configs:
+        filter_key = f_config.get("ui_filter_key")
+        if filter_key:
+            placeholder_tag = f"{{{{FILTER_{filter_key}}}}}"
+            # Use the filter value if provided, otherwise default to an empty string
+            replacement_value = str(user_filter_values.get(filter_key, ""))
+            populated_html = populated_html.replace(placeholder_tag, replacement_value)
+    # --- END OF NEW BLOCK ---
+
+    for filter_key, val_str_list in user_filter_values.items():
         bq_col, op_conf = None, None
         for sfx_key_iter_dyn in sorted(ALLOWED_FILTER_OPERATORS.keys(), key=len, reverse=True):
             if filter_key.endswith(sfx_key_iter_dyn):
@@ -1407,12 +1419,17 @@ async def execute_report_and_get_url(
     for table_idx, table_config in enumerate(data_tables_configs):
         table_placeholder_name = table_config.table_placeholder_name
         base_sql_query = table_config.sql_query
+        # This field was renamed in the payload but the variable name here is local
         field_configs_list = table_config.field_display_configs
         
         if not table_placeholder_name or not base_sql_query: continue
             
         field_configs_map = {fc.field_name: fc for fc in field_configs_list}
         schema_for_table = all_schemas.get(table_placeholder_name, [])
+        if not schema_for_table:
+            print(f"WARN: No schema found for data table '{table_placeholder_name}' in BaseQuerySchemaJSON. Skipping.")
+            continue
+            
         schema_type_map = {f['name']: f['type'] for f in schema_for_table}
         body_field_names_in_order = [f['name'] for f in schema_for_table if (field_configs_map.get(f['name']) or FieldDisplayConfig(field_name=f['name'])).include_in_body]
         
@@ -1525,11 +1542,8 @@ async def execute_report_and_get_url(
         populated_html = populated_html.replace(placeholder_to_replace, table_rows_html_str)
 
     # --- 4. Process Looks and Finalize Report ---
-# --- 4. Process Looks and Finalize Report ---
     if look_configs_json:
         look_configs = json.loads(look_configs_json)
-        user_filter_values = looker_filters_payload_exec.get("dynamic_filters", {})
-
         for look_config in look_configs:
             placeholder_to_replace = f"{{{{{look_config['placeholder_name']}}}}}"
             look_filters_for_sdk = {}
@@ -1551,57 +1565,41 @@ async def execute_report_and_get_url(
                     raise Exception(f"Look {look_config['look_id']} or its query could not be fetched.")
 
                 new_query = look.query
-                if not new_query.filters:
-                    new_query.filters = {}
-                
-                for f_key, f_val in look_filters_for_sdk.items():
-                    new_query.filters[f_key] = f_val
+                if not new_query.filters: new_query.filters = {}
+                for f_key, f_val in look_filters_for_sdk.items(): new_query.filters[f_key] = f_val
 
                 image_bytes = looker_sdk.run_inline_query(
                     result_format="png",
                     body=models40.WriteQuery(
-                        model=new_query.model,
-                        view=new_query.view,
-                        fields=new_query.fields,
-                        pivots=new_query.pivots,
-                        filters=new_query.filters,
-                        sorts=new_query.sorts,
-                        limit=new_query.limit,
-                        # --- FIX IS HERE: Add the vis_config to the request body ---
-                        vis_config=new_query.vis_config
+                        model=new_query.model, view=new_query.view, fields=new_query.fields,
+                        pivots=new_query.pivots, filters=new_query.filters, sorts=new_query.sorts,
+                        limit=new_query.limit, vis_config=new_query.vis_config
                     )
                 )
                 base64_image = base64.b64encode(image_bytes).decode('utf-8')
                 image_src_data_uri = f"data:image/png;base64,{base64_image}"
-                populated_html = populated_html.replace(placeholder_to_replace, image_src_data_uri)
+                populated_html = populated_html.replace(placeholder_to_replace, f'<img src="{image_src_data_uri}" style="max-width:100%; height:auto;" />')
 
             except Exception as e:
                 print(f"ERROR: Failed to render Look {look_config['look_id']}: {e}")
                 populated_html = populated_html.replace(placeholder_to_replace, f"Error rendering chart: {e}")
-    # --- Final GCS Upload block with enhanced debugging ---
+
+    # --- Final GCS Upload block ---
     try:
         report_id = str(uuid.uuid4())
         output_gcs_blob_name = f"{config.GCS_GENERATED_REPORTS_PREFIX}{report_id}.html"
-        
-        print(f"DEBUG: Attempting to save report to gs://{config.GCS_BUCKET_NAME}/{output_gcs_blob_name}")
-
         bucket = gcs_client.bucket(config.GCS_BUCKET_NAME)
         blob_out = bucket.blob(output_gcs_blob_name)
         blob_out.upload_from_string(populated_html, content_type='text/html; charset=utf-8')
-        
-        print(f"INFO: Successfully generated and saved report.")
-    
+        print(f"INFO: Successfully generated and saved report to gs://{config.GCS_BUCKET_NAME}/{output_gcs_blob_name}")
     except Exception as e:
-        print("---! FATAL EXCEPTION DURING GCS UPLOAD !---")
-        import traceback
-        traceback.print_exc() 
-        print("---! END OF EXCEPTION INFO !---")
-        
         print(f"FATAL: Could not upload final report to GCS. Error: {e}")
+        import traceback; traceback.print_exc() 
         raise HTTPException(status_code=500, detail=f"Failed to save final report to GCS: {str(e)}")
         
     report_url_path = f"/view_generated_report/{report_id}"
     return JSONResponse(content={"report_url_path": report_url_path})
+
 @app.get("/view_generated_report/{report_id}", response_class=HTMLResponse)
 async def view_generated_report_endpoint(
     report_id: str, gcs_client: storage.Client = Depends(get_storage_client_dep)
