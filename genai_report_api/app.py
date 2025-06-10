@@ -102,8 +102,20 @@ Custom Calculation Row: `<tr><td>Totals:</td>{{MyOverallTotals}}</tr>`
 """
 
 # --- Pydantic Models ---
+class PlaceholderUserMapping(BaseModel):
+    original_tag: str
+    map_type: str # e.g., "ignore", "static_text", "standardize_top", "map_to_look", "map_to_filter"
+    map_to_schema_field: Optional[str] = None
+    map_to_look_placeholder: Optional[str] = None # NEW
+    map_to_filter_key: Optional[str] = None       # NEW
+    fallback_value: Optional[str] = None
+    static_text_value: Optional[str] = None
+
 class RevertPayload(BaseModel):
     target_version: int
+
+class HtmlEditPayload(BaseModel):
+    html_content: str
 
 class LookConfig(BaseModel):
     look_id: int
@@ -790,64 +802,92 @@ async def update_system_instruction_endpoint(
         return {"message": "System instruction updated successfully."}
     except Exception as e: print(f"ERROR: Failed to PUT system instruction to GCS: {e}"); raise HTTPException(status_code=500, detail=f"Failed to update system instruction: {str(e)}")
 
+# In app.py, replace the existing discover_template_placeholders function
+
 @app.get("/report_definitions/{report_name}/discover_placeholders", response_model=DiscoverPlaceholdersResponse)
 async def discover_template_placeholders(
     report_name: str,
     gcs_client: storage.Client = Depends(get_storage_client_dep),
     bq_client: bigquery.Client = Depends(get_bigquery_client_dep)
 ):
-    template_gcs_path: Optional[str] = None; field_configs_json_str: Optional[str] = None; calc_row_configs_json_str: Optional[str] = None
-    query_def_sql = f"SELECT TemplateURL, FieldDisplayConfigsJSON, CalculationRowConfigsJSON FROM `{config.gcp_project_id}.report_printing.report_list` WHERE ReportName = @report_name_param"
+    # This query now fetches Look and Filter configs to help with suggestions
+    query_def_sql = f"""
+        SELECT TemplateURL, LookConfigsJSON, FilterConfigsJSON, BaseQuerySchemaJSON,
+               FieldDisplayConfigsJSON, CalculationRowConfigsJSON 
+        FROM `{config.gcp_project_id}.report_printing.report_list` 
+        WHERE ReportName = @report_name_param
+    """
     def_params = [ScalarQueryParameter("report_name_param", "STRING", report_name)]
     try:
         results = list(bq_client.query(query_def_sql, job_config=bigquery.QueryJobConfig(query_parameters=def_params)).result())
-        if results and results[0].get("TemplateURL"):
-            template_gcs_path = results[0].get("TemplateURL"); field_configs_json_str = results[0].get("FieldDisplayConfigsJSON"); calc_row_configs_json_str = results[0].get("CalculationRowConfigsJSON")
-        else: return DiscoverPlaceholdersResponse(report_name=report_name, placeholders=[], template_found=False, error_message=f"Definition or TemplateURL not found for '{report_name}'.")
-    except Exception as e: return DiscoverPlaceholdersResponse(report_name=report_name, placeholders=[], template_found=False, error_message=f"Error fetching report definition details: {str(e)}")
+        if not results:
+            return DiscoverPlaceholdersResponse(report_name=report_name, placeholders=[], template_found=False, error_message=f"Definition not found for '{report_name}'.")
+        
+        row = results[0]
+        template_gcs_path = row.get("TemplateURL")
+        if not template_gcs_path or not template_gcs_path.startswith("gs://"):
+            return DiscoverPlaceholdersResponse(report_name=report_name, placeholders=[], template_found=False, error_message=f"Invalid GCS TemplateURL: {template_gcs_path}")
 
-    if not template_gcs_path or not template_gcs_path.startswith("gs://"): return DiscoverPlaceholdersResponse(report_name=report_name, placeholders=[], template_found=False, error_message=f"Invalid GCS TemplateURL: {template_gcs_path}")
-    html_content: str = ""
+        # Load configs to make better suggestions
+        look_configs = json.loads(row.get("LookConfigsJSON") or '[]')
+        filter_configs = json.loads(row.get("FilterConfigsJSON") or '[]')
+        field_display_configs = [FieldDisplayConfig(**item) for item in json.loads(row.get("FieldDisplayConfigsJSON") or '[]')]
+        calculation_rows_configs = [CalculationRowConfig(**item) for item in json.loads(row.get("CalculationRowConfigsJSON") or '[]')]
+
+    except Exception as e:
+        return DiscoverPlaceholdersResponse(report_name=report_name, placeholders=[], template_found=False, error_message=f"Error fetching report definition details: {str(e)}")
+
+    # Load HTML from GCS
     try:
-        path_parts = template_gcs_path.replace("gs://", "").split("/", 1); bucket_name, blob_name = path_parts[0], path_parts[1]
+        path_parts = template_gcs_path.replace("gs://", "").split("/", 1)
+        bucket_name, blob_name = path_parts[0], path_parts[1]
         blob = gcs_client.bucket(bucket_name).blob(blob_name)
-        if not blob.exists(): return DiscoverPlaceholdersResponse(report_name=report_name, placeholders=[], template_found=False, error_message=f"Template not found at {template_gcs_path}")
+        if not blob.exists():
+            return DiscoverPlaceholdersResponse(report_name=report_name, placeholders=[], template_found=False, error_message=f"Template not found at {template_gcs_path}")
         html_content = blob.download_as_text(encoding='utf-8')
-    except Exception as e: return DiscoverPlaceholdersResponse(report_name=report_name, placeholders=[], template_found=False, error_message=f"Error loading template from GCS: {str(e)}")
-    
-    field_display_configs_for_discovery: List[FieldDisplayConfig] = []
-    if field_configs_json_str:
-        try: field_display_configs_for_discovery = [FieldDisplayConfig(**item) for item in json.loads(field_configs_json_str)]
-        except (json.JSONDecodeError, TypeError) as e: print(f"WARN: Could not parse FieldDisplayConfigsJSON for '{report_name}' in discover: {e}")
-    calculation_rows_configs_for_discovery: List[CalculationRowConfig] = []
-    if calc_row_configs_json_str:
-        try: calculation_rows_configs_for_discovery = [CalculationRowConfig(**item) for item in json.loads(calc_row_configs_json_str)]
-        except (json.JSONDecodeError, TypeError) as e: print(f"WARN: Could not parse CalculationRowConfigsJSON for '{report_name}' in discover: {e}")
+    except Exception as e:
+        return DiscoverPlaceholdersResponse(report_name=report_name, placeholders=[], template_found=False, error_message=f"Error loading template from GCS: {str(e)}")
     
     discovered_placeholders_list: List[DiscoveredPlaceholderInfo] = []
     placeholder_keys_found = set(re.findall(r"\{\{([^{}]+?)\}\}", html_content, re.DOTALL))
+
     for key_in_tag_raw in placeholder_keys_found:
-        key_in_tag_content = key_in_tag_raw.strip()
-        original_full_tag = f"{{{{{key_in_tag_content}}}}}"
-        if not key_in_tag_content: continue
-        status = "unrecognized"; suggestion = None
-        if key_in_tag_content == "TABLE_ROWS_HTML_PLACEHOLDER":
-            status = "standard_table_rows"; suggestion = PlaceholderMappingSuggestion(map_to_type="standard_placeholder", map_to_value=key_in_tag_content)
-        else:
-            matched_by_config = False
-            for fd_config in field_display_configs_for_discovery:
-                if key_in_tag_content == f"TOP_{fd_config.field_name}" and fd_config.include_at_top:
-                    status = "auto_matched_top"; suggestion = PlaceholderMappingSuggestion(map_to_type="schema_field", map_to_value=fd_config.field_name, usage_as="TOP"); matched_by_config = True; break
-                if key_in_tag_content == f"HEADER_{fd_config.field_name}" and fd_config.include_in_header:
-                    status = "auto_matched_header"; suggestion = PlaceholderMappingSuggestion(map_to_type="schema_field", map_to_value=fd_config.field_name, usage_as="HEADER"); matched_by_config = True; break
-            if not matched_by_config:
-                for calc_config in calculation_rows_configs_for_discovery:
-                    if key_in_tag_content == calc_config.values_placeholder_name:
-                        status = "auto_matched_calc_row"; suggestion = PlaceholderMappingSuggestion(map_to_type="calculation_row_placeholder", map_to_value=key_in_tag_content); break
-        discovered_placeholders_list.append(DiscoveredPlaceholderInfo(original_tag=original_full_tag,key_in_tag=key_in_tag_content,status=status,suggestion=suggestion))
+        key = key_in_tag_raw.strip()
+        original_tag = f"{{{{{key}}}}}"
+        if not key: continue
+
+        status = "unrecognized"
+        suggestion = None
+        matched = False
+
+        # Suggestion Logic (now more powerful)
+        if key.startswith("TABLE_ROWS_"):
+            status, suggestion, matched = "standard_table_rows", None, True
+        
+        if not matched:
+            for fd_config in field_display_configs:
+                if key == f"TOP_{fd_config.field_name}" and fd_config.include_at_top:
+                    status, suggestion, matched = "auto_matched_top", PlaceholderMappingSuggestion(map_to_type="standardize_top", map_to_value=fd_config.field_name), True; break
+                if key == f"HEADER_{fd_config.field_name}" and fd_config.include_in_header:
+                    status, suggestion, matched = "auto_matched_header", PlaceholderMappingSuggestion(map_to_type="standardize_header", map_to_value=fd_config.field_name), True; break
+        if not matched:
+            for calc_config in calculation_rows_configs:
+                if key == calc_config.values_placeholder_name:
+                    status, suggestion, matched = "auto_matched_calc_row", PlaceholderMappingSuggestion(map_to_type="calculation_row_placeholder", map_to_value=key), True; break
+        if not matched:
+            for look in look_configs:
+                if key == look.get("placeholder_name"):
+                    status, suggestion, matched = "auto_matched_look", PlaceholderMappingSuggestion(map_to_type="map_to_look", map_to_value=look.get("placeholder_name")), True; break
+        if not matched:
+            for f_config in filter_configs:
+                 if key == f"FILTER_{f_config.get('ui_filter_key')}":
+                    status, suggestion, matched = "auto_matched_filter", PlaceholderMappingSuggestion(map_to_type="map_to_filter", map_to_value=f_config.get("ui_filter_key")), True; break
+        
+        discovered_placeholders_list.append(DiscoveredPlaceholderInfo(original_tag=original_tag, key_in_tag=key, status=status, suggestion=suggestion))
+
     unique_placeholders_dict = {p.original_tag: p for p in discovered_placeholders_list}
-    final_placeholders = list(unique_placeholders_dict.values())
-    final_placeholders.sort(key=lambda p: (p.status, p.key_in_tag))
+    final_placeholders = sorted(list(unique_placeholders_dict.values()), key=lambda p: (p.status, p.key_in_tag))
+    
     return DiscoverPlaceholdersResponse(report_name=report_name, placeholders=final_placeholders, template_found=True)
 
 @app.post("/report_definitions", status_code=202)
@@ -1029,6 +1069,93 @@ async def revert_report_template(
     return {
         "message": f"Report '{report_name}' successfully reverted to version {payload.target_version} (saved as new version {new_version_number})."
     }
+
+# In app.py, after the revert_report_template endpoint
+
+@app.get("/report_definitions/{report_name}/get_html", status_code=200)
+async def get_report_html(
+    report_name: str,
+    bq_client: bigquery.Client = Depends(get_bigquery_client_dep),
+    gcs_client: storage.Client = Depends(get_storage_client_dep)
+):
+    """Fetches the latest HTML template content for a given report."""
+    print(f"INFO: Request to fetch HTML for report '{report_name}'.")
+    query_def_sql = f"SELECT TemplateURL FROM `{config.gcp_project_id}.report_printing.report_list` WHERE ReportName = @report_name_param"
+    def_params = [ScalarQueryParameter("report_name_param", "STRING", report_name)]
+    try:
+        results = list(bq_client.query(query_def_sql, job_config=bigquery.QueryJobConfig(query_parameters=def_params)).result())
+        if not results or not results[0].get("TemplateURL"):
+            raise HTTPException(status_code=404, detail=f"TemplateURL not found for '{report_name}'.")
+        
+        template_gcs_path = results[0].get("TemplateURL")
+        path_parts = template_gcs_path.replace("gs://", "").split("/", 1)
+        bucket_name, blob_name = path_parts[0], path_parts[1]
+        
+        blob = gcs_client.bucket(bucket_name).blob(blob_name)
+        if not blob.exists():
+            raise HTTPException(status_code=404, detail=f"Template file not found at {template_gcs_path}")
+        
+        html_content = blob.download_as_text(encoding='utf-8')
+        return {"html_content": html_content}
+
+    except Exception as e:
+        if isinstance(e, HTTPException): raise e
+        raise HTTPException(status_code=500, detail=f"Error fetching report HTML: {str(e)}")
+
+@app.post("/report_definitions/{report_name}/save_html", status_code=200)
+async def save_report_html(
+    report_name: str,
+    payload: HtmlEditPayload,
+    bq_client: bigquery.Client = Depends(get_bigquery_client_dep),
+    gcs_client: storage.Client = Depends(get_storage_client_dep)
+):
+    """Saves edited HTML as a new version of the report template."""
+    print(f"INFO: Request to save edited HTML for report '{report_name}'.")
+    
+    # 1. Fetch current version number
+    query_def_sql = f"SELECT LatestTemplateVersion FROM `{config.gcp_project_id}.report_printing.report_list` WHERE ReportName = @report_name_param"
+    def_params = [ScalarQueryParameter("report_name_param", "STRING", report_name)]
+    try:
+        results = list(bq_client.query(query_def_sql, job_config=bigquery.QueryJobConfig(query_parameters=def_params)).result())
+        if not results:
+            raise HTTPException(status_code=404, detail=f"Report definition not found for '{report_name}'.")
+        latest_version = results[0].get("LatestTemplateVersion") or 0
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching current report version: {str(e)}")
+
+    # 2. Upload the new HTML content to a new versioned file in GCS
+    report_gcs_path_safe = report_name.replace(" ", "_").replace("/", "_").lower()
+    base_gcs_folder = f"report_templates/{report_gcs_path_safe}"
+    new_version_number = latest_version + 1
+    destination_blob_name = f"{base_gcs_folder}/template_v{new_version_number}.html"
+    destination_gcs_uri = f"gs://{config.GCS_BUCKET_NAME}/{destination_blob_name}"
+
+    try:
+        bucket = gcs_client.bucket(config.GCS_BUCKET_NAME)
+        blob = bucket.blob(destination_blob_name)
+        blob.upload_from_string(payload.html_content, content_type='text/html; charset=utf-8')
+        print(f"INFO: Saved new HTML version to '{destination_blob_name}'.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save new HTML template to GCS: {str(e)}")
+
+    # 3. Update BigQuery to point to the new version
+    table_id = f"`{config.gcp_project_id}.report_printing.report_list`"
+    update_sql = f"UPDATE {table_id} SET TemplateURL = @new_url, LatestTemplateVersion = @new_version, LastGeneratedTimestamp = CURRENT_TIMESTAMP() WHERE ReportName = @report_name"
+    update_params = [
+        ScalarQueryParameter("new_url", "STRING", destination_gcs_uri),
+        ScalarQueryParameter("new_version", "INT64", new_version_number),
+        ScalarQueryParameter("report_name", "STRING", report_name),
+    ]
+    try:
+        bq_client.query(update_sql, job_config=bigquery.QueryJobConfig(query_parameters=update_params)).result()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update BigQuery with new template version: {str(e)}")
+
+    return {"message": f"Successfully saved edits as new version {new_version_number}."}
+
+
+# In app.py, replace the existing finalize_template_with_mappings function
+
 @app.post("/report_definitions/{report_name}/finalize_template", status_code=200)
 async def finalize_template_with_mappings(
     report_name: str,
@@ -1059,10 +1186,23 @@ async def finalize_template_with_mappings(
     modified_html_content = current_html_content
     for mapping in payload.mappings:
         original_tag_escaped = re.escape(mapping.original_tag)
-        if mapping.map_type == "ignore": modified_html_content = re.sub(original_tag_escaped, "", modified_html_content)
-        elif mapping.map_type == "static_text" and mapping.static_text_value is not None: modified_html_content = re.sub(original_tag_escaped, mapping.static_text_value, modified_html_content)
-        elif mapping.map_type == "standardize_top" and mapping.map_to_schema_field: new_tag = f"{{{{TOP_{mapping.map_to_schema_field}}}}}"; modified_html_content = re.sub(original_tag_escaped, new_tag, modified_html_content)
-        elif mapping.map_type == "standardize_header" and mapping.map_to_schema_field: new_tag = f"{{{{HEADER_{mapping.map_to_schema_field}}}}}"; modified_html_content = re.sub(original_tag_escaped, new_tag, modified_html_content)
+        new_tag = ""
+        if mapping.map_type == "ignore":
+            new_tag = "" # Replace with empty string
+        elif mapping.map_type == "static_text" and mapping.static_text_value is not None:
+            new_tag = mapping.static_text_value
+        elif mapping.map_type == "standardize_top" and mapping.map_to_schema_field:
+            new_tag = f"{{{{TOP_{mapping.map_to_schema_field}}}}}"
+        elif mapping.map_type == "standardize_header" and mapping.map_to_schema_field:
+            new_tag = f"{{{{HEADER_{mapping.map_to_schema_field}}}}}"
+        elif mapping.map_type == "map_to_look" and mapping.map_to_look_placeholder:
+            new_tag = f"{{{{{mapping.map_to_look_placeholder}}}}}"
+        elif mapping.map_type == "map_to_filter" and mapping.map_to_filter_key:
+            new_tag = f"{{{{FILTER_{mapping.map_to_filter_key}}}}}"
+        
+        # Only perform replacement if new_tag was set
+        if new_tag or mapping.map_type == "ignore":
+            modified_html_content = re.sub(original_tag_escaped, new_tag, modified_html_content)
 
     new_version_number = last_version_number + 1
     report_gcs_path_safe = report_name.replace(" ", "_").replace("/", "_").lower()

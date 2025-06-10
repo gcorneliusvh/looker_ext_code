@@ -19,29 +19,32 @@ import {
     Button,
     Paragraph,
 } from '@looker/components';
-import { FilterList, Close, Edit, Delete, Restore, Build } from '@styled-icons/material';
+import { FilterList, Close, Edit, Delete, Restore, Build, Link } from '@styled-icons/material';
 import DynamicFilterUI from './DynamicFilterUI';
 import RefineReportDialog from './RefineReportDialog';
 import RevertDialog from './RevertDialog';
+import PlaceholderMappingDialog from './PlaceholderMappingDialog';
 
-function ViewAllReports({ onEditReport }) { // Receive onEditReport prop
+function ViewAllReports({ onEditReport }) {
   const [reports, setReports] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
   const [isExecutingReport, setIsExecutingReport] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isDiscovering, setIsDiscovering] = useState(false);
 
-  // State for Confirm Delete Dialog
+  // --- Modal States ---
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const [reportToDelete, setReportToDelete] = useState(null);
-
-  // Other modal states...
   const [isFilterModalOpen, setIsFilterModalOpen] = useState(false);
   const [selectedReportForModal, setSelectedReportForModal] = useState(null);
   const [isRefineModalOpen, setIsRefineModalOpen] = useState(false);
   const [reportNameToRefine, setReportNameToRefine] = useState('');
   const [isRevertModalOpen, setIsRevertModalOpen] = useState(false);
   const [reportToRevert, setReportToRevert] = useState(null);
+  const [isMappingModalOpen, setIsMappingModalOpen] = useState(false);
+  const [reportToMap, setReportToMap] = useState(null);
+  const [discoveredPlaceholders, setDiscoveredPlaceholders] = useState([]);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [sortConfig, setSortConfig] = useState({ type: 'alphabetical', direction: 'asc' });
@@ -74,21 +77,15 @@ function ViewAllReports({ onEditReport }) { // Receive onEditReport prop
           throw new Error(errorDetail);
       }
 
-      // --- EXPANDED PARSING LOGIC ---
       const reportsWithParsedData = data.map(report => {
         try {
-            // The 'SQL' column now holds the array of data table configs
             const dataTables = JSON.parse(report.SQL || '[]');
-            
-            // The schema from the backend is an object where keys are table placeholder names
-            // We need to provide the schema for the filter UI. Let's combine them.
             const schemaForFilter = JSON.parse(report.BaseQuerySchemaJSON || '{}');
             let combinedSchema = [];
             if (typeof schemaForFilter === 'object' && schemaForFilter !== null) {
                 Object.values(schemaForFilter).forEach(tableSchema => {
                     if (Array.isArray(tableSchema)) combinedSchema.push(...tableSchema);
                 });
-                // De-duplicate fields by name
                 const uniqueFields = new Map();
                 combinedSchema.forEach(field => {
                     if (!uniqueFields.has(field.name)) uniqueFields.set(field.name, field);
@@ -103,21 +100,17 @@ function ViewAllReports({ onEditReport }) { // Receive onEditReport prop
                 TemplateURL: report.TemplateURL,
                 LatestTemplateVersion: report.LatestTemplateVersion,
                 LastGeneratedTimestamp: report.LastGeneratedTimestamp,
-                
-                // Fully parsed data structures for editing
                 DataTables: dataTables,
                 LookConfigs: JSON.parse(report.LookConfigsJSON || '[]'),
                 FilterConfigs: JSON.parse(report.FilterConfigsJSON || '[]'),
                 UserAttributeMappings: JSON.parse(report.UserAttributeMappingsJSON || '{}'),
-
-                // Schema for the filter UI
                 schemaForFilterUI: combinedSchema,
             };
         } catch (e) {
             console.error(`Failed to parse one or more JSON fields for report ${report.ReportName}:`, e);
-            return null; // Exclude corrupted report definitions
+            return null;
         }
-      }).filter(Boolean); // Filter out any nulls from parsing errors
+      }).filter(Boolean);
       
       setReports(reportsWithParsedData);
       console.log("ViewAllReports: Report definitions loaded and parsed.");
@@ -219,9 +212,7 @@ function ViewAllReports({ onEditReport }) { // Receive onEditReport prop
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(executionPayload),
       });
-
       const responseData = response.body;
-
       if (!response.ok) {
         let errorMessage = `Backend returned an error: ${response.status} ${response.statusText}`;
         if (responseData && typeof responseData === 'object' && responseData.detail) {
@@ -229,7 +220,6 @@ function ViewAllReports({ onEditReport }) { // Receive onEditReport prop
         }
         throw new Error(errorMessage);
       }
-
       if (responseData && responseData.report_url_path) {
         const fullReportUrl = BACKEND_BASE_URL + responseData.report_url_path;
         extensionSDK.openBrowserWindow(fullReportUrl, '_blank');
@@ -245,9 +235,57 @@ function ViewAllReports({ onEditReport }) { // Receive onEditReport prop
     }
   };
   
+  const handleOpenMappingModal = async (report) => {
+    setIsDiscovering(true);
+    setReportToMap(report);
+    const discoverUrl = `${BACKEND_BASE_URL}/report_definitions/${encodeURIComponent(report.ReportName)}/discover_placeholders`;
+    try {
+        const response = await extensionSDK.fetchProxy(discoverUrl, { method: 'GET' });
+        if (!response.ok) throw new Error(response.body?.detail || `Error ${response.status}`);
+        
+        setDiscoveredPlaceholders(response.body?.placeholders || []);
+        setIsMappingModalOpen(true);
+    } catch (err) {
+        console.error("Error discovering placeholders:", err);
+        alert(`Failed to discover placeholders: ${err.message}`);
+        setReportToMap(null);
+    } finally {
+        setIsDiscovering(false);
+    }
+  };
+
+  const handleApplyMappings = async (reportName, mappings) => {
+    setIsMappingModalOpen(false);
+    setIsLoading(true);
+    const finalizeUrl = `${BACKEND_BASE_URL}/report_definitions/${encodeURIComponent(reportName)}/finalize_template`;
+    try {
+        const payload = { report_name: reportName, mappings: mappings };
+        const response = await extensionSDK.fetchProxy(finalizeUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        if (!response.ok) throw new Error(response.body?.detail || `Error ${response.status}`);
+        alert('Template finalized successfully!');
+        fetchReportDefinitions();
+    } catch (err) {
+        console.error("Error finalizing template:", err);
+        alert(`Failed to finalize template: ${err.message}`);
+    } finally {
+        setIsLoading(false);
+        setReportToMap(null);
+        setDiscoveredPlaceholders([]);
+    }
+  };
+
+  const handleCloseMappingModal = () => {
+    setIsMappingModalOpen(false);
+    setReportToMap(null);
+    setDiscoveredPlaceholders([]);
+  };
+
   const processedReports = useMemo(() => {
     let displayReports = [...reports];
-
     if (sortConfig.type === 'alphabetical') {
       displayReports.sort((a, b) => {
         const nameA = a.ReportName || '';
@@ -262,7 +300,6 @@ function ViewAllReports({ onEditReport }) { // Receive onEditReport prop
         return sortConfig.direction === 'asc' ? dateA - dateB : dateB - a;
       });
     }
-
     if (searchTerm.trim() !== '') {
       displayReports = displayReports.filter(report =>
         (report.ReportName || '').toLowerCase().includes(searchTerm.toLowerCase())
@@ -279,71 +316,43 @@ function ViewAllReports({ onEditReport }) { // Receive onEditReport prop
       <Dialog isOpen={isConfirmOpen} onClose={handleCancelDelete}>
         <DialogLayout
           header={<Heading as="h3" p="medium" borderBottom="ui1">Confirm Deletion</Heading>}
-          footer={
-            <Space between p="medium" borderTop="ui1">
-                <Button onClick={handleCancelDelete}>Cancel</Button>
-                <Button color="critical" onClick={handleConfirmDelete}>Delete</Button>
-            </Space>
-          }
+          footer={<Space between p="medium" borderTop="ui1"> <Button onClick={handleCancelDelete}>Cancel</Button> <Button color="critical" onClick={handleConfirmDelete}>Delete</Button> </Space>}
         >
-          <Box p="large">
-            <Paragraph>
-              Are you sure you want to permanently delete the report "{reportToDelete}" and all its associated template versions?
-            </Paragraph>
-          </Box>
+          <Box p="large"> <Paragraph> Are you sure you want to permanently delete the report "{reportToDelete}" and all its associated template versions? </Paragraph> </Box>
         </DialogLayout>
       </Dialog>
       
       {isRevertModalOpen && reportToRevert && (
-        <RevertDialog
-          isOpen={isRevertModalOpen}
-          onClose={closeRevertModal}
-          reportName={reportToRevert.ReportName}
-          currentVersion={reportToRevert.LatestTemplateVersion}
-          onRevertSuccess={() => {
-            closeRevertModal();
-            fetchReportDefinitions();
-          }}
-        />
+        <RevertDialog isOpen={isRevertModalOpen} onClose={closeRevertModal} reportName={reportToRevert.ReportName} currentVersion={reportToRevert.LatestTemplateVersion} onRevertSuccess={() => { closeRevertModal(); fetchReportDefinitions(); }} />
       )}
 
       {isFilterModalOpen && selectedReportForModal && (
         <Dialog isOpen={isFilterModalOpen} onClose={closeFilterModal} maxWidth="80vw" width="800px">
-          <DialogLayout
-            header={
-              <Box display="flex" justifyContent="space-between" alignItems="center" width="100%" p="medium" borderBottom="ui1">
-                <Heading as="h3">Apply Filters: {selectedReportForModal.ReportName}</Heading>
-                <IconButton icon={<Close />} label="Close Filters" onClick={closeFilterModal} size="small" disabled={isExecutingReport}/>
-              </Box>
-            }
-          >
-            <DynamicFilterUI
-              reportDefinitionName={selectedReportForModal.ReportName}
-              schema={selectedReportForModal.schemaForFilterUI || []}
-              onApplyAndClose={handleFiltersAppliedAndExecute}
-            />
+          <DialogLayout header={<Box display="flex" justifyContent="space-between" alignItems="center" width="100%" p="medium" borderBottom="ui1"> <Heading as="h3">Apply Filters: {selectedReportForModal.ReportName}</Heading> <IconButton icon={<Close />} label="Close Filters" onClick={closeFilterModal} size="small" disabled={isExecutingReport}/> </Box>}>
+            <DynamicFilterUI reportDefinitionName={selectedReportForModal.ReportName} schema={selectedReportForModal.schemaForFilterUI || []} onApplyAndClose={handleFiltersAppliedAndExecute} />
           </DialogLayout>
         </Dialog>
       )}
 
       {isRefineModalOpen && reportNameToRefine && (
-        <RefineReportDialog
-            isOpen={isRefineModalOpen}
-            onClose={closeRefineModal}
-            reportName={reportNameToRefine}
+        <RefineReportDialog isOpen={isRefineModalOpen} onClose={closeRefineModal} reportName={reportNameToRefine} />
+      )}
+      
+      {isMappingModalOpen && reportToMap && (
+        <PlaceholderMappingDialog
+            isOpen={isMappingModalOpen}
+            onClose={handleCloseMappingModal}
+            reportName={reportToMap.ReportName}
+            discoveredPlaceholders={discoveredPlaceholders}
+            schema={reportToMap.schemaForFilterUI}
+            onApplyMappings={handleApplyMappings}
         />
       )}
 
       <Heading as="h1" mb="xlarge" fontWeight="semiBold"> Available Report Definitions </Heading>
       <Flex mb="large" justifyContent="space-between" alignItems="flex-end" flexWrap="wrap">
-        <FlexItem flexBasis="50%" minWidth="250px" mb={{xs: "small", md: "none"}}>
-          <InputText placeholder="Search reports by name..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} aria-label="Search reports" />
-        </FlexItem>
-        <Flex alignItems="center">
-          <Text fontSize="small" color="text2" mr="xsmall" whiteSpace="nowrap">Sort by:</Text>
-          <FieldSelect value={sortConfig.type} options={[{ value: 'alphabetical', label: 'Name' }, { value: 'date', label: 'Last Modified' }]} onChange={(value) => setSortConfig(prev => ({ ...prev, type: value }))} mr="small" width="130px" aria-label="Sort type" />
-          <FieldSelect value={sortConfig.direction} options={[{ value: 'asc', label: 'Asc' }, { value: 'desc', label: 'Desc' }]} onChange={(value) => setSortConfig(prev => ({ ...prev, direction: value }))} width="90px" aria-label="Sort direction" />
-        </Flex>
+        <FlexItem flexBasis="50%" minWidth="250px" mb={{xs: "small", md: "none"}}> <InputText placeholder="Search reports by name..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} aria-label="Search reports" /> </FlexItem>
+        <Flex alignItems="center"> <Text fontSize="small" color="text2" mr="xsmall" whiteSpace="nowrap">Sort by:</Text> <FieldSelect value={sortConfig.type} options={[{ value: 'alphabetical', label: 'Name' }, { value: 'date', label: 'Last Modified' }]} onChange={(value) => setSortConfig(prev => ({ ...prev, type: value }))} mr="small" width="130px" aria-label="Sort type" /> <FieldSelect value={sortConfig.direction} options={[{ value: 'asc', label: 'Asc' }, { value: 'desc', label: 'Desc' }]} onChange={(value) => setSortConfig(prev => ({ ...prev, direction: value }))} width="90px" aria-label="Sort direction" /> </Flex>
       </Flex>
 
       {processedReports.length === 0 ? (
@@ -356,7 +365,7 @@ function ViewAllReports({ onEditReport }) { // Receive onEditReport prop
               description={`Tables: ${report.DataTables?.length || 0} | Charts: ${report.LookConfigs?.length || 0} | Version: ${report.LatestTemplateVersion || 'N/A'} | Last Mod: ${report.LastGeneratedTimestamp ? new Date(report.LastGeneratedTimestamp).toLocaleString() : 'N/A'}`}
               onClick={() => openFilterModal(report)}
               itemRole="button"
-              disabled={isExecutingReport || isDeleting}
+              disabled={isExecutingReport || isDeleting || isDiscovering}
               px="small" py="medium"
             >
               <Space between alignItems="center" width="100%">
@@ -364,6 +373,7 @@ function ViewAllReports({ onEditReport }) { // Receive onEditReport prop
                 <Space>
                    <IconButton icon={<Delete />} label="Delete Report" size="small" tooltip="Delete Report Definition" onClick={(e) => { e.stopPropagation(); handleDeleteReport(report.ReportName); }} disabled={isExecutingReport || isDeleting} />
                    <IconButton icon={<Build />} label="Edit Definition" size="small" tooltip="Edit Report Definition" onClick={(e) => { e.stopPropagation(); onEditReport(report); }} disabled={isExecutingReport || isDeleting} />
+                   <IconButton icon={<Link />} label="Map Placeholders" size="small" tooltip="Map AI-generated placeholders" onClick={(e) => { e.stopPropagation(); handleOpenMappingModal(report); }} disabled={isExecutingReport || isDeleting || isDiscovering} />
                    <IconButton icon={<Restore />} label="Revert Template" size="small" tooltip="Revert to a previous template version" onClick={(e) => { e.stopPropagation(); openRevertModal(report); }} disabled={isExecutingReport || isDeleting || (report.LatestTemplateVersion || 0) <= 1} />
                    <IconButton icon={<Edit />} label="Refine AI Template" size="small" tooltip="Refine AI Generated Template" onClick={(e) => { e.stopPropagation(); openRefineModal(report.ReportName); }} disabled={isExecutingReport || isDeleting} />
                    <IconButton icon={<FilterList />} label="Apply Filters & Run" size="small" tooltip="Apply Filters & Run Report" onClick={(e) => { e.stopPropagation(); openFilterModal(report); }} disabled={isExecutingReport || isDeleting} />

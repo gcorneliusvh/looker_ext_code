@@ -1,5 +1,5 @@
 // src/ReportForm.js
-import React, { useState, useEffect, useMemo, useContext } from 'react'; // useMemo imported
+import React, { useState, useEffect, useMemo, useContext } from 'react';
 import styled from 'styled-components';
 import { ExtensionContext } from '@looker/extension-sdk-react';
 import {
@@ -58,7 +58,8 @@ const DynamicSection = styled(Box)`
 `;
 // --- End of Styled Components ---
 
-const getInitialDataTables = () => ([{ id: uuidv4(), placeholderName: '', sql_query: '', fieldConfigs: [] }]);
+// CORRECTED: Use 'table_placeholder_name' to match the backend model
+const getInitialDataTables = () => ([{ id: uuidv4(), table_placeholder_name: '', sql_query: '', fieldConfigs: [] }]);
 
 function ReportForm({ reportToEdit, onComplete }) {
   const [reportName, setReportName] = useState('');
@@ -83,7 +84,6 @@ function ReportForm({ reportToEdit, onComplete }) {
   
   const isEditing = !!reportToEdit;
 
-  // --- NEW: Validation logic ---
   const isFormValid = useMemo(() => {
     if (!reportName.trim() || !imageUrl.trim() || !promptText.trim()) {
       return false;
@@ -91,8 +91,8 @@ function ReportForm({ reportToEdit, onComplete }) {
     if (dataTables.length === 0) {
       return false;
     }
-    // Check if every data table has both a placeholder and a query
-    return dataTables.every(dt => dt.placeholderName.trim() && dt.sql_query && dt.sql_query.trim());
+    // CORRECTED: Check for 'table_placeholder_name'
+    return dataTables.every(dt => dt.table_placeholder_name && dt.table_placeholder_name.trim() && dt.sql_query && dt.sql_query.trim());
   }, [reportName, imageUrl, promptText, dataTables]);
 
   const resetForm = () => {
@@ -124,7 +124,8 @@ function ReportForm({ reportToEdit, onComplete }) {
     }
   }, [reportToEdit]);
 
-  const handleAddDataTable = () => setDataTables(prev => [...prev, { id: uuidv4(), placeholderName: '', sql_query: '', fieldConfigs: [] }]);
+  // CORRECTED: Use 'table_placeholder_name'
+  const handleAddDataTable = () => setDataTables(prev => [...prev, { id: uuidv4(), table_placeholder_name: '', sql_query: '', fieldConfigs: [] }]);
   const handleRemoveDataTable = (id) => setDataTables(prev => prev.filter(t => t.id !== id));
   const handleDataTableChange = (id, fieldName, value) => setDataTables(prev => prev.map(t => t.id === id ? { ...t, [fieldName]: value } : t));
   const handleAddLookConfig = () => setLookConfigs(prev => [...prev, { id: uuidv4(), lookId: '', placeholderName: '' }]);
@@ -161,14 +162,19 @@ function ReportForm({ reportToEdit, onComplete }) {
     try {
       const parsedUserAttributeMappings = JSON.parse(userAttributeMappings || '{}');
       
-      const dataTablesPayload = dataTables.filter(dt => dt.placeholderName && dt.sql_query).map(({ id, fieldConfigs, ...rest }) => ({
-        ...rest,
-        field_display_configs: fieldConfigs || [],
+      const dataTablesPayload = dataTables
+        .filter(dt => dt.table_placeholder_name && dt.sql_query)
+        .map(dt => ({
+            table_placeholder_name: dt.table_placeholder_name,
+            sql_query: dt.sql_query,
+            field_display_configs: dt.fieldConfigs || [],
       }));
 
-      const looksPayload = lookConfigs.filter(lc => lc.lookId && lc.placeholderName).map(({ id, ...rest }) => ({
-        ...rest,
-        look_id: parseInt(rest.lookId, 10),
+      const looksPayload = lookConfigs
+        .filter(lc => lc.lookId && lc.placeholderName)
+        .map(lc => ({
+            look_id: parseInt(lc.lookId, 10),
+            placeholder_name: lc.placeholderName,
       }));
 
       const filtersPayload = filterConfigs
@@ -265,12 +271,13 @@ function ReportForm({ reportToEdit, onComplete }) {
                 <DynamicSection key={table.id}>
                   <Box display="flex" justifyContent="space-between" alignItems="center"><Heading as="h3" fontSize="medium">Data Table {index + 1}</Heading><IconButton icon={<Delete />} label="Remove Data Table" onClick={() => handleRemoveDataTable(table.id)} disabled={dataTables.length <= 1}/></Box>
                   <Space>
-                    <FieldText label="Table Placeholder Name" description="e.g., sales_summary_table" value={table.placeholderName} onChange={(e) => handleDataTableChange(table.id, 'placeholderName', e.target.value)} disabled={isSubmitting}/>
+                    {/* CORRECTED: Use table.table_placeholder_name and update it onChange */}
+                    <FieldText label="Table Placeholder Name" description="e.g., sales_summary_table" value={table.table_placeholder_name || ''} onChange={(e) => handleDataTableChange(table.id, 'table_placeholder_name', e.target.value)} disabled={isSubmitting}/>
                     <LookerButton mt="large" onClick={() => handleDryRunAndConfigure(table.id, table.sql_query)} disabled={dryRunLoading || isSubmitting || !table.sql_query || !table.sql_query.trim()} iconBefore={dryRunLoading && configuringTableId === table.id ? <Spinner size={18}/> : undefined}>Configure Columns</LookerButton>
                   </Space>
                   <Box mt="small">
                     <Label htmlFor={`sql-${table.id}`}>SQL Query <span style={{color: 'red'}}>*</span></Label>
-                    <LookerTextarea id={`sql-${table.id}`} value={table.sql_query} onChange={(e) => handleDataTableChange(table.id, 'sql_query', e.target.value)} rows={6} placeholder="SELECT ..." disabled={isSubmitting}/>
+                    <LookerTextarea id={`sql-${table.id}`} value={table.sql_query || ''} onChange={(e) => handleDataTableChange(table.id, 'sql_query', e.target.value)} rows={6} placeholder="SELECT ..." disabled={isSubmitting}/>
                   </Box>
                 </DynamicSection>
               ))}
@@ -282,7 +289,10 @@ function ReportForm({ reportToEdit, onComplete }) {
               {lookConfigs.map((config, index) => (
                 <DynamicSection key={config.id}>
                   <Box display="flex" justifyContent="space-between" alignItems="center"><Heading as="h3" fontSize="medium">Chart {index + 1}</Heading><IconButton icon={<Delete />} label="Remove Chart" onClick={() => handleRemoveLookConfig(config.id)} /></Box>
-                  <Space><FieldText label="Look ID" value={config.lookId} onChange={(e) => handleLookConfigChange(config.id, 'lookId', e.target.value)} placeholder="e.g., 123" type="number" disabled={isSubmitting}/><FieldText label="Placeholder Name" value={config.placeholderName} onChange={(e) => handleLookConfigChange(config.id, 'placeholderName', e.target.value)} placeholder="e.g., sales_trend_chart" description="Use letters, numbers, underscores" disabled={isSubmitting}/></Space>
+                  <Space>
+                    <FieldText label="Look ID" value={config.lookId} onChange={(e) => handleLookConfigChange(config.id, 'lookId', e.target.value)} placeholder="e.g., 123" type="number" disabled={isSubmitting}/>
+                    <FieldText label="Placeholder Name" value={config.placeholderName} onChange={(e) => handleLookConfigChange(config.id, 'placeholderName', e.target.value)} placeholder="e.g., sales_trend_chart" description="Use letters, numbers, underscores" disabled={isSubmitting}/>
+                  </Space>
                 </DynamicSection>
               ))}
               <LookerButton onClick={handleAddLookConfig} iconBefore={<Add />} disabled={isSubmitting}>Add Chart from Look</LookerButton>
@@ -302,7 +312,8 @@ function ReportForm({ reportToEdit, onComplete }) {
                     {filter.targets.map((target) => (
                       <Space key={target.id} my="small" align="flex-end">
                         <Select value={target.target_type} onChange={val => handleTargetChange(filter.id, target.id, 'target_type', val)} options={[{value:'DATA_TABLE', label:'Data Table'}, {value:'LOOK', label:'Look'}]} />
-                        <Select value={target.target_id} onChange={val => handleTargetChange(filter.id, target.id, 'target_id', val)} options={target.target_type === 'DATA_TABLE' ? dataTables.map(dt => ({value: dt.placeholderName, label: dt.placeholderName})) : lookConfigs.map(lc => ({value: lc.lookId, label: `Look ${lc.lookId}`}))} placeholder={`Select ${target.target_type.replace('_',' ')}...`} />
+                        {/* CORRECTED: Use table.table_placeholder_name for the options */}
+                        <Select value={target.target_id} onChange={val => handleTargetChange(filter.id, target.id, 'target_id', val)} options={target.target_type === 'DATA_TABLE' ? dataTables.map(dt => ({value: dt.table_placeholder_name, label: dt.table_placeholder_name})) : lookConfigs.map(lc => ({value: lc.lookId, label: `Look ${lc.lookId}`}))} placeholder={`Select ${target.target_type.replace('_',' ')}...`} />
                         <FieldText label="Target Field/Filter Name" value={target.target_field_name} onChange={e => handleTargetChange(filter.id, target.id, 'target_field_name', e.target.value)} placeholder="e.g., orders.created_date"/>
                         <IconButton icon={<Delete/>} label="Remove Target" onClick={() => handleRemoveTarget(filter.id, target.id)}/>
                       </Space>
@@ -324,7 +335,6 @@ function ReportForm({ reportToEdit, onComplete }) {
       <FieldDisplayConfigurator isOpen={isFieldConfigModalOpen} onClose={handleCloseConfigModal} onApply={handleApplyFieldConfigs} schema={currentSchemaForConfig} reportName={reportName} initialConfigs={(configuringTableId && dataTables.find(dt => dt.id === configuringTableId)?.fieldConfigs) || []} />
       
       <FormGroup style={{ marginTop: '30px' }}>
-        {/* UPDATED: Disabled logic now uses isFormValid */}
         <Button 
             onClick={handleSubmitDefinition} 
             disabled={isSubmitting || dryRunLoading || (!isEditing && !isFormValid)}>
