@@ -16,7 +16,8 @@ import {
     FieldSelect,
     Flex,
     FlexItem,
-    useConfirm
+    ConfirmLayout, // Replaces useConfirm
+    Button, // Needed for ConfirmLayout
 } from '@looker/components';
 import { FilterList, Close, Edit, Delete } from '@styled-icons/material';
 import DynamicFilterUI from './DynamicFilterUI';
@@ -29,6 +30,10 @@ function ViewAllReports({ onSelectReportForFiltering }) {
   const [isExecutingReport, setIsExecutingReport] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
+  // State for the manual confirmation dialog
+  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+  const [reportToDelete, setReportToDelete] = useState(null);
+
   const [isFilterModalOpen, setIsFilterModalOpen] = useState(false);
   const [selectedReportForModal, setSelectedReportForModal] = useState(null);
 
@@ -39,8 +44,7 @@ function ViewAllReports({ onSelectReportForFiltering }) {
   const [sortConfig, setSortConfig] = useState({ type: 'alphabetical', direction: 'asc' });
 
   const { extensionSDK } = useContext(ExtensionContext);
-  const [confirm, openConfirmation] = useConfirm();
-
+  
   const BACKEND_BASE_URL = 'https://looker-ext-code-17837811141.us-central1.run.app';
 
   const fetchReportDefinitions = async () => {
@@ -84,24 +88,19 @@ function ViewAllReports({ onSelectReportForFiltering }) {
             console.error(`Failed to parse LookConfigsJSON for report ${report.ReportName}:`, e);
         }
 
-        // --- NEW SCHEMA PARSING LOGIC ---
         let combinedSchema = [];
         if (report.BaseQuerySchemaJSON) {
             try {
                 const parsedSchema = JSON.parse(report.BaseQuerySchemaJSON);
                 if (Array.isArray(parsedSchema)) {
-                    // Handle old format (single schema array) for backward compatibility
                     combinedSchema = parsedSchema;
                 } else if (typeof parsedSchema === 'object' && parsedSchema !== null) {
-                    // Handle new format (object with schemas per table)
-                    // Combine all fields from all tables into one list for the filter UI.
                     let allFields = [];
                     for (const key in parsedSchema) {
                         if (Array.isArray(parsedSchema[key])) {
                             allFields.push(...parsedSchema[key]);
                         }
                     }
-                    // De-duplicate fields by name to avoid showing the same filter twice
                     const uniqueFields = new Map();
                     allFields.forEach(field => {
                         if (!uniqueFields.has(field.name)) {
@@ -114,11 +113,10 @@ function ViewAllReports({ onSelectReportForFiltering }) {
                 console.error(`Failed to parse BaseQuerySchemaJSON for report ${report.ReportName}:`, e);
             }
         }
-        // --- END OF NEW SCHEMA PARSING LOGIC ---
-
+        
         return {
             ...report,
-            schema: combinedSchema, // Use the new combined and de-duplicated schema
+            schema: combinedSchema,
             lookConfigs: lookConfigs,
         };
       });
@@ -135,6 +133,50 @@ function ViewAllReports({ onSelectReportForFiltering }) {
   useEffect(() => {
     fetchReportDefinitions();
   }, [extensionSDK]);
+
+  // --- MODIFIED DELETE FLOW ---
+
+  // 1. This function now just opens the dialog
+  const handleDeleteReport = (reportName) => {
+    setReportToDelete(reportName);
+    setIsConfirmOpen(true);
+  };
+  
+  // 2. This function handles the actual API call after confirmation
+  const handleConfirmDelete = async () => {
+    if (!reportToDelete) return;
+    
+    setIsDeleting(true);
+    setIsConfirmOpen(false); // Close dialog immediately
+    const backendUrl = `${BACKEND_BASE_URL}/report_definitions/${encodeURIComponent(reportToDelete)}`;
+
+    try {
+        const response = await extensionSDK.fetchProxy(backendUrl, {
+            method: 'DELETE',
+        });
+
+        if (!response.ok) {
+            const errorBody = response.body || { detail: `Request failed with status ${response.status}` };
+            throw new Error(errorBody.detail || 'Unknown error occurred.');
+        }
+        
+        alert(`Report '${reportToDelete}' deleted successfully.`);
+        fetchReportDefinitions(); // Refresh list
+    } catch (err) {
+        console.error("Error deleting report:", err);
+        alert(`Failed to delete report: ${err.message}`);
+    } finally {
+        setIsDeleting(false);
+        setReportToDelete(null); // Clean up state
+    }
+  };
+
+  const handleCancelDelete = () => {
+      setIsConfirmOpen(false);
+      setReportToDelete(null);
+  };
+  
+  // --- END OF MODIFIED DELETE FLOW ---
 
   const openFilterModal = (report) => {
     if (!report.schema || !Array.isArray(report.schema) || report.schema.length === 0) {
@@ -159,41 +201,6 @@ function ViewAllReports({ onSelectReportForFiltering }) {
     setIsRefineModalOpen(false);
     setReportNameToRefine('');
     fetchReportDefinitions();
-  };
-
-  const handleDeleteReport = async (reportName) => {
-      openConfirmation({
-          title: `Confirm Deletion: ${reportName}`,
-          message: 'Are you sure you want to permanently delete this report definition and all its associated template versions in GCS?',
-          confirmLabel: 'Delete',
-          cancelLabel: 'Cancel',
-          onConfirm: async (close) => {
-              setIsDeleting(true);
-              const backendUrl = `${BACKEND_BASE_URL}/report_definitions/${encodeURIComponent(reportName)}`;
-              try {
-                  const response = await extensionSDK.fetchProxy(backendUrl, {
-                      method: 'DELETE',
-                  });
-
-                  if (!response.ok) {
-                      const errorBody = response.body || { detail: `Request failed with status ${response.status}` };
-                      throw new Error(errorBody.detail || 'Unknown error occurred.');
-                  }
-                  
-                  alert(`Report '${reportName}' deleted successfully.`);
-                  fetchReportDefinitions(); 
-              } catch (err) {
-                  console.error("Error deleting report:", err);
-                  alert(`Failed to delete report: ${err.message}`);
-              } finally {
-                  setIsDeleting(false);
-                  close();
-              }
-          },
-          onCancel: (close) => {
-              close();
-          }
-      });
   };
 
   const handleFiltersAppliedAndExecute = async (filterCriteriaFromModal) => {
@@ -239,7 +246,7 @@ function ViewAllReports({ onSelectReportForFiltering }) {
       closeFilterModal();
     }
   };
-
+  
   const processedReports = useMemo(() => {
     let displayReports = [...reports];
 
@@ -275,6 +282,16 @@ function ViewAllReports({ onSelectReportForFiltering }) {
 
   return (
     <Box p="large" width="100%">
+      <Dialog isOpen={isConfirmOpen} onClose={handleCancelDelete}>
+          <ConfirmLayout
+              title={`Confirm Deletion`}
+              message={`Are you sure you want to permanently delete the report "${reportToDelete}" and all its associated template versions?`}
+              onConfirm={handleConfirmDelete}
+              onCancel={handleCancelDelete}
+              confirmButtonProps={{ color: 'critical' }}
+          />
+      </Dialog>
+
       <Heading as="h1" mb="xlarge" fontWeight="semiBold">
         Available Report Definitions
       </Heading>
@@ -304,8 +321,8 @@ function ViewAllReports({ onSelectReportForFiltering }) {
           <FieldSelect
             value={sortConfig.direction}
             options={[
-              { value: 'asc', label: 'Asc' },
-              { value: 'desc', label: 'Desc' },
+              { value: 'asc', label: 'Desc' },
+              { value: 'desc', label: 'Asc' },
             ]}
             onChange={(value) => setSortConfig(prev => ({ ...prev, direction: value }))}
             width="90px"
@@ -397,7 +414,6 @@ function ViewAllReports({ onSelectReportForFiltering }) {
             reportName={reportNameToRefine}
         />
       )}
-      {confirm}
     </Box>
   );
 }
