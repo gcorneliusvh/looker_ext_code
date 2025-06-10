@@ -102,6 +102,9 @@ Custom Calculation Row: `<tr><td>Totals:</td>{{MyOverallTotals}}</tr>`
 """
 
 # --- Pydantic Models ---
+class RevertPayload(BaseModel):
+    target_version: int
+
 class LookConfig(BaseModel):
     look_id: int
     placeholder_name: str
@@ -944,7 +947,88 @@ async def delete_report_definition(
 
     return {"message": f"Report definition '{report_name}' and its associated templates were successfully deleted."}
 
+# In app.py, after the delete_report_definition endpoint
 
+@app.post("/report_definitions/{report_name}/revert", status_code=200)
+async def revert_report_template(
+    report_name: str,
+    payload: RevertPayload,
+    bq_client: bigquery.Client = Depends(get_bigquery_client_dep),
+    gcs_client: storage.Client = Depends(get_storage_client_dep)
+):
+    print(f"INFO: Received request to revert report '{report_name}' to version {payload.target_version}.")
+    
+    # 1. Fetch current definition to get the latest version number
+    query_def_sql = f"SELECT LatestTemplateVersion FROM `{config.gcp_project_id}.report_printing.report_list` WHERE ReportName = @report_name_param"
+    def_params = [ScalarQueryParameter("report_name_param", "STRING", report_name)]
+    try:
+        results = list(bq_client.query(query_def_sql, job_config=bigquery.QueryJobConfig(query_parameters=def_params)).result())
+        if not results:
+            raise HTTPException(status_code=404, detail=f"Report definition not found for '{report_name}'.")
+        
+        latest_version = results[0].get("LatestTemplateVersion") or 0
+        
+        if payload.target_version >= latest_version or payload.target_version <= 0:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Invalid target version. Must be a positive number less than the current version ({latest_version})."
+            )
+
+    except Exception as e:
+        if isinstance(e, HTTPException): raise e
+        raise HTTPException(status_code=500, detail=f"Error fetching current report version: {str(e)}")
+
+    # 2. Copy the old GCS template to a new versioned file
+    report_gcs_path_safe = report_name.replace(" ", "_").replace("/", "_").lower()
+    base_gcs_folder = f"report_templates/{report_gcs_path_safe}"
+    
+    source_blob_name = f"{base_gcs_folder}/template_v{payload.target_version}.html"
+    new_version_number = latest_version + 1
+    destination_blob_name = f"{base_gcs_folder}/template_v{new_version_number}.html"
+    destination_gcs_uri = f"gs://{config.GCS_BUCKET_NAME}/{destination_blob_name}"
+
+    try:
+        bucket = gcs_client.bucket(config.GCS_BUCKET_NAME)
+        source_blob = bucket.blob(source_blob_name)
+
+        if not source_blob.exists():
+            raise HTTPException(status_code=404, detail=f"Source template for version {payload.target_version} not found in GCS at {source_blob_name}.")
+
+        # Copy the blob to a new one, creating the new version
+        bucket.copy_blob(source_blob, bucket, destination_blob_name)
+        print(f"INFO: Reverted template. Copied '{source_blob_name}' to '{destination_blob_name}'.")
+
+    except Exception as e:
+        if isinstance(e, HTTPException): raise e
+        print(f"ERROR: Failed during GCS copy for revert operation: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to copy template in GCS: {str(e)}")
+
+    # 3. Update the BigQuery record to point to the new template version
+    table_id = f"`{config.gcp_project_id}.report_printing.report_list`"
+    update_sql = f"""
+        UPDATE {table_id}
+        SET TemplateURL = @new_template_url, LatestTemplateVersion = @new_version,
+            LastGeneratedTimestamp = CURRENT_TIMESTAMP()
+        WHERE ReportName = @report_name
+    """
+    update_params = [
+        ScalarQueryParameter("new_template_url", "STRING", destination_gcs_uri),
+        ScalarQueryParameter("new_version", "INT64", new_version_number),
+        ScalarQueryParameter("report_name", "STRING", report_name),
+    ]
+    try:
+        bq_client.query(update_sql, job_config=bigquery.QueryJobConfig(query_parameters=update_params)).result()
+        print(f"INFO: BigQuery updated for '{report_name}' to point to version {new_version_number}.")
+    except Exception as e:
+        print(f"ERROR: Failed to update BigQuery for reverted template: {e}")
+        # At this point, GCS has a new file but BQ failed. This is a partial failure state.
+        # A more robust system might try to delete the newly created GCS file.
+        # For now, we'll return an error indicating the problem.
+        raise HTTPException(status_code=500, detail=f"GCS template was reverted, but failed to update BigQuery record: {str(e)}")
+
+    return {
+        "message": f"Report '{report_name}' successfully reverted to version {payload.target_version} (saved as new version {new_version_number})."
+    }
 @app.post("/report_definitions/{report_name}/finalize_template", status_code=200)
 async def finalize_template_with_mappings(
     report_name: str,
