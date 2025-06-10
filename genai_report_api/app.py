@@ -1251,6 +1251,7 @@ async def execute_report_and_get_url(
         populated_html = populated_html.replace(placeholder_to_replace, table_rows_html_str)
 
     # --- 4. Process Looks and Finalize Report ---
+# --- 4. Process Looks and Finalize Report ---
     if look_configs_json:
         look_configs = json.loads(look_configs_json)
         user_filter_values = looker_filters_payload_exec.get("dynamic_filters", {})
@@ -1291,7 +1292,9 @@ async def execute_report_and_get_url(
                         pivots=new_query.pivots,
                         filters=new_query.filters,
                         sorts=new_query.sorts,
-                        limit=new_query.limit
+                        limit=new_query.limit,
+                        # --- FIX IS HERE: Add the vis_config to the request body ---
+                        vis_config=new_query.vis_config
                     )
                 )
                 base64_image = base64.b64encode(image_bytes).decode('utf-8')
@@ -1299,7 +1302,6 @@ async def execute_report_and_get_url(
                 populated_html = populated_html.replace(placeholder_to_replace, image_src_data_uri)
 
             except Exception as e:
-                # This block must be correctly indented
                 print(f"ERROR: Failed to render Look {look_config['look_id']}: {e}")
                 populated_html = populated_html.replace(placeholder_to_replace, f"Error rendering chart: {e}")
     # --- Final GCS Upload block with enhanced debugging ---
