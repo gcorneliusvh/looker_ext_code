@@ -19,13 +19,15 @@ import {
     Button,
     Paragraph,
 } from '@looker/components';
-import { FilterList, Close, Edit, Delete, Restore, Build, Link } from '@styled-icons/material';
+import { FilterList, Close, Edit, Delete, Restore, Build, Link, Code } from '@styled-icons/material';
 import DynamicFilterUI from './DynamicFilterUI';
 import RefineReportDialog from './RefineReportDialog';
 import RevertDialog from './RevertDialog';
 import PlaceholderMappingDialog from './PlaceholderMappingDialog';
+// We are temporarily keeping HtmlEditDialog out to prevent crashes.
+// import HtmlEditDialog from './HtmlEditDialog'; 
 
-function ViewAllReports({ onEditReport }) {
+function ViewAllReports({ onEditReport, onHtmlEdit }) { // Add onHtmlEdit prop
   const [reports, setReports] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
@@ -45,7 +47,7 @@ function ViewAllReports({ onEditReport }) {
   const [isMappingModalOpen, setIsMappingModalOpen] = useState(false);
   const [reportToMap, setReportToMap] = useState(null);
   const [discoveredPlaceholders, setDiscoveredPlaceholders] = useState([]);
-
+  
   const [searchTerm, setSearchTerm] = useState('');
   const [sortConfig, setSortConfig] = useState({ type: 'alphabetical', direction: 'asc' });
 
@@ -305,7 +307,7 @@ function ViewAllReports({ onEditReport }) {
         (report.ReportName || '').toLowerCase().includes(searchTerm.toLowerCase())
       );
     }
-    return displayReports;
+    return processedReports;
   }, [reports, searchTerm, sortConfig]);
 
   if (isLoading) { return <Box p="large" display="flex" justifyContent="center"><Spinner /></Box>; }
@@ -346,6 +348,8 @@ function ViewAllReports({ onEditReport }) {
             discoveredPlaceholders={discoveredPlaceholders}
             schema={reportToMap.schemaForFilterUI}
             onApplyMappings={handleApplyMappings}
+            lookConfigs={reportToMap.LookConfigs}
+            filterConfigs={reportToMap.FilterConfigs}
         />
       )}
 
@@ -374,6 +378,7 @@ function ViewAllReports({ onEditReport }) {
                    <IconButton icon={<Delete />} label="Delete Report" size="small" tooltip="Delete Report Definition" onClick={(e) => { e.stopPropagation(); handleDeleteReport(report.ReportName); }} disabled={isExecutingReport || isDeleting} />
                    <IconButton icon={<Build />} label="Edit Definition" size="small" tooltip="Edit Report Definition" onClick={(e) => { e.stopPropagation(); onEditReport(report); }} disabled={isExecutingReport || isDeleting} />
                    <IconButton icon={<Link />} label="Map Placeholders" size="small" tooltip="Map AI-generated placeholders" onClick={(e) => { e.stopPropagation(); handleOpenMappingModal(report); }} disabled={isExecutingReport || isDeleting || isDiscovering} />
+                   {/* The "Edit HTML" button is temporarily removed from here to prevent the crash */}
                    <IconButton icon={<Restore />} label="Revert Template" size="small" tooltip="Revert to a previous template version" onClick={(e) => { e.stopPropagation(); openRevertModal(report); }} disabled={isExecutingReport || isDeleting || (report.LatestTemplateVersion || 0) <= 1} />
                    <IconButton icon={<Edit />} label="Refine AI Template" size="small" tooltip="Refine AI Generated Template" onClick={(e) => { e.stopPropagation(); openRefineModal(report.ReportName); }} disabled={isExecutingReport || isDeleting} />
                    <IconButton icon={<FilterList />} label="Apply Filters & Run" size="small" tooltip="Apply Filters & Run Report" onClick={(e) => { e.stopPropagation(); openFilterModal(report); }} disabled={isExecutingReport || isDeleting} />

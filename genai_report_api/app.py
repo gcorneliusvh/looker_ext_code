@@ -289,6 +289,7 @@ app = FastAPI(lifespan=lifespan)
 # --- CORS Configuration ---
 # --- CORS Configuration ---
 NGROK_URL_FROM_ENV = os.getenv("FRONTEND_NGROK_URL")
+TINYMCE_API_KEY = os.getenv("TINYMCE_API_KEY")
 # IMPORTANT: Replace the placeholder with your actual Looker instance URL
 LOOKER_INSTANCE_URL_FROM_ENV = os.getenv("LOOKER_INSTANCE_URL", "https://igmprinting.cloud.looker.com") 
 LOOKER_EXTENSION_SANDBOX_HOST = os.getenv("LOOKER_EXTENSION_SANDBOX_HOST","https://83d14716-08b3-4def-bdca-54f4b2af9f19-extensions.cloud.looker.com")

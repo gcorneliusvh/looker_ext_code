@@ -1,43 +1,23 @@
 // src/PlaceholderMappingDialog.js
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
     Dialog,
     DialogLayout,
     Heading,
     IconButton,
     Button,
-    Select,         // Looker Component for dropdowns
-    FieldText,      // Looker Component for text inputs
-    Box,            // Looker Component for layout
+    Select,
+    FieldText,
+    Box,
     Paragraph,
     Space,
-    // Table, TableHead, TableBody, TableRow, TableHeaderCell, TableDataCell are REMOVED
 } from '@looker/components';
 import { Close } from '@styled-icons/material';
 
-// Define some basic styles for the HTML table elements to mimic Looker's general feel
-const tableStyle = {
-    width: '100%',
-    borderCollapse: 'collapse',
-    marginBottom: '24px', // Equivalent to mb="xlarge"
-    fontSize: '0.875rem', // Common base font size in Looker UIs
-};
-
-const thStyle = {
-    borderBottom: '1px solid #dee2e6', // A common border color
-    padding: '12px 16px',             // Spacing similar to Looker's TableHeaderCell
-    textAlign: 'left',
-    fontWeight: '600', // semiBold
-    backgroundColor: '#f7f8fa', // Light background for header
-    lineHeight: '1.5',
-};
-
-const tdStyle = {
-    borderBottom: '1px solid #dee2e6',
-    padding: '12px 16px',              // Spacing similar to Looker's TableDataCell
-    verticalAlign: 'top',              // Important for multi-line content in cells
-    lineHeight: '1.5',
-};
+// --- Re-usable styles for the table ---
+const tableStyle = { width: '100%', borderCollapse: 'collapse', marginBottom: '24px', fontSize: '0.875rem' };
+const thStyle = { borderBottom: '1px solid #dee2e6', padding: '12px 16px', textAlign: 'left', fontWeight: '600', backgroundColor: '#f7f8fa', lineHeight: '1.5' };
+const tdStyle = { borderBottom: '1px solid #dee2e6', padding: '12px 16px', verticalAlign: 'top', lineHeight: '1.5' };
 
 function PlaceholderMappingDialog({
     isOpen,
@@ -45,7 +25,9 @@ function PlaceholderMappingDialog({
     reportName,
     discoveredPlaceholders = [],
     schema = [],
-    onApplyMappings // Expects (reportName, mappingsToApply)
+    lookConfigs = [],
+    filterConfigs = [],
+    onApplyMappings
 }) {
     const [mappings, setMappings] = useState({});
 
@@ -55,14 +37,30 @@ function PlaceholderMappingDialog({
             discoveredPlaceholders.forEach(p => {
                 let defaultMapType = 'ignore';
                 let defaultSchemaField = '';
+                let defaultLookPlaceholder = '';
+                let defaultFilterKey = '';
 
+                // Use the new, smarter suggestions from the backend to set defaults
                 if (p.suggestion) {
-                    if (p.status === 'auto_matched_top') {
-                        defaultMapType = 'standardize_top';
-                        defaultSchemaField = p.suggestion.map_to_value || '';
-                    } else if (p.status === 'auto_matched_header') {
-                        defaultMapType = 'standardize_header';
-                        defaultSchemaField = p.suggestion.map_to_value || '';
+                    switch (p.suggestion.map_to_type) {
+                        case 'standardize_top':
+                            defaultMapType = 'standardize_top';
+                            defaultSchemaField = p.suggestion.map_to_value || '';
+                            break;
+                        case 'standardize_header':
+                            defaultMapType = 'standardize_header';
+                            defaultSchemaField = p.suggestion.map_to_value || '';
+                            break;
+                        case 'map_to_look':
+                            defaultMapType = 'map_to_look';
+                            defaultLookPlaceholder = p.suggestion.map_to_value || '';
+                            break;
+                        case 'map_to_filter':
+                             defaultMapType = 'map_to_filter';
+                             defaultFilterKey = p.suggestion.map_to_value || '';
+                             break;
+                        default:
+                            defaultMapType = 'ignore';
                     }
                 }
 
@@ -71,6 +69,8 @@ function PlaceholderMappingDialog({
                     key_in_tag: p.key_in_tag,
                     map_type: defaultMapType,
                     map_to_schema_field: defaultSchemaField,
+                    map_to_look_placeholder: defaultLookPlaceholder,
+                    map_to_filter_key: defaultFilterKey,
                     static_text_value: '',
                     fallback_value: '',
                 };
@@ -80,47 +80,41 @@ function PlaceholderMappingDialog({
     }, [isOpen, discoveredPlaceholders]);
 
     const handleMappingChange = (placeholderTag, field, value) => {
-        setMappings(prev => {
-            const updatedMapping = { ...prev[placeholderTag], [field]: value };
-            if (field === 'map_type') {
-                if (value !== 'schema_field' && value !== 'standardize_top' && value !== 'standardize_header') {
-                    updatedMapping.map_to_schema_field = '';
-                    updatedMapping.fallback_value = '';
-                }
-                if (value !== 'static_text') {
-                    updatedMapping.static_text_value = '';
-                }
-            }
-            return { ...prev, [placeholderTag]: updatedMapping };
-        });
+        setMappings(prev => ({
+            ...prev,
+            [placeholderTag]: { ...prev[placeholderTag], [field]: value },
+        }));
     };
 
     const handleApply = () => {
-        const mappingsToApply = Object.values(mappings)
-            .filter(m => m.map_type !== 'ignore' || (m.map_type === 'ignore' && m.original_tag))
-            .map(m => ({
-                original_tag: m.original_tag,
-                map_type: m.map_type,
-                map_to_schema_field: (m.map_type === 'schema_field' || m.map_type === 'standardize_top' || m.map_type === 'standardize_header') ? m.map_to_schema_field : null,
-                static_text_value: m.map_type === 'static_text' ? m.static_text_value : null,
-                fallback_value: (m.map_type === 'schema_field' || m.map_type === 'standardize_top' || m.map_type === 'standardize_header') ? (m.fallback_value || null) : null,
-            }));
-        
+        const mappingsToApply = Object.values(mappings).map(m => ({
+            original_tag: m.original_tag,
+            map_type: m.map_type,
+            map_to_schema_field: (m.map_type === 'standardize_top' || m.map_type === 'standardize_header') ? m.map_to_schema_field : null,
+            map_to_look_placeholder: m.map_type === 'map_to_look' ? m.map_to_look_placeholder : null,
+            map_to_filter_key: m.map_type === 'map_to_filter' ? m.map_to_filter_key : null,
+            static_text_value: m.map_type === 'static_text' ? m.static_text_value : null,
+            fallback_value: (m.map_type === 'standardize_top' || m.map_type === 'standardize_header') ? (m.fallback_value || null) : null,
+        }));
         onApplyMappings(reportName, mappingsToApply);
     };
 
-    const schemaFieldOptions = schema.map(f => ({ value: f.name, label: f.name }));
+    const schemaFieldOptions = useMemo(() => schema.map(f => ({ value: f.name, label: f.name })), [schema]);
+    const lookOptions = useMemo(() => lookConfigs.map(lc => ({ value: lc.placeholder_name, label: `Look: ${lc.placeholder_name}` })), [lookConfigs]);
+    const filterOptions = useMemo(() => filterConfigs.map(fc => ({ value: fc.ui_filter_key, label: `Filter: ${fc.ui_label}` })), [filterConfigs]);
 
     const mappingTypeOptions = [
         { value: 'ignore', label: 'Ignore (Remove Placeholder)' },
         { value: 'static_text', label: 'Set Static Text' },
-        { value: 'standardize_top', label: 'Use as TOP Field ({{TOP_FieldName}})' },
-        { value: 'standardize_header', label: 'Use as HEADER Field ({{HEADER_FieldName}})' },
+        { value: 'standardize_top', label: 'Map to TOP Field ({{TOP_FieldName}})' },
+        { value: 'standardize_header', label: 'Map to HEADER Field ({{HEADER_FieldName}})' },
+        { value: 'map_to_look', label: 'Map to Look Chart' },
+        { value: 'map_to_filter', label: 'Map to Filter Value' },
     ];
 
     if (!isOpen) return null;
 
-    const editablePlaceholders = discoveredPlaceholders.filter(p => p.key_in_tag !== 'TABLE_ROWS_HTML_PLACEHOLDER');
+    const editablePlaceholders = discoveredPlaceholders.filter(p => !p.key_in_tag.startsWith('TABLE_ROWS_'));
 
     return (
         <Dialog isOpen={isOpen} onClose={onClose} maxWidth="90vw" width="1200px">
@@ -143,23 +137,22 @@ function PlaceholderMappingDialog({
                 <Box p="large" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
                     <Paragraph fontSize="small" color="text2" mb="large">
                         Review placeholders found in the generated HTML template. Map them to data sources, provide static content, or ignore them.
-                        The placeholder `{'{{TABLE_ROWS_HTML_PLACEHOLDER}}'}` is handled automatically.
+                        Table row placeholders are handled automatically.
                     </Paragraph>
                     {editablePlaceholders.length === 0 ? (
-                        <Paragraph>No editable placeholders were discovered in this template, or the discovery process failed.</Paragraph>
+                        <Paragraph>No editable placeholders were discovered in this template.</Paragraph>
                     ) : (
                         <table style={tableStyle}>
                             <thead>
                                 <tr>
-                                    <th style={{...thStyle, width: '30%'}}>Placeholder in Template</th>
-                                    <th style={{...thStyle, width: '20%'}}>Detected Status / Suggestion</th>
+                                    <th style={{...thStyle, width: '25%'}}>Placeholder</th>
+                                    <th style={{...thStyle, width: '25%'}}>Detected Status / Suggestion</th>
                                     <th style={{...thStyle, width: '50%'}}>Action / Configuration</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {editablePlaceholders.map((p) => {
-                                    const currentMapping = mappings[p.original_tag] || { map_type: 'ignore', map_to_schema_field: '', static_text_value: '', fallback_value: '' };
-                                    
+                                    const currentMapping = mappings[p.original_tag] || {};
                                     return (
                                         <tr key={p.original_tag}>
                                             <td style={tdStyle}>
@@ -173,9 +166,7 @@ function PlaceholderMappingDialog({
                                                 </Box>
                                                 {p.suggestion && (
                                                     <Box mt="xxsmall" fontSize="xsmall" color="text2">
-                                                        Suggests: {p.suggestion.map_to_type?.replace(/_/g, ' ')}
-                                                        {p.suggestion.map_to_value && ` -> '${p.suggestion.map_to_value}'`}
-                                                        {p.suggestion.usage_as && ` (as ${p.suggestion.usage_as})`}
+                                                        Suggests: {p.suggestion.map_to_value}
                                                     </Box>
                                                 )}
                                             </td>
@@ -184,29 +175,32 @@ function PlaceholderMappingDialog({
                                                     options={mappingTypeOptions}
                                                     value={currentMapping.map_type}
                                                     onChange={(value) => handleMappingChange(p.original_tag, 'map_type', value)}
-                                                    mb="small" // Looker Component prop
-                                                    width="100%"
+                                                    mb="small" width="100%"
                                                 />
                                                 {(currentMapping.map_type === 'standardize_top' || currentMapping.map_type === 'standardize_header') && (
-                                                    <>
-                                                        <Select
-                                                            options={[{label: '--- Select Schema Field ---', value: ''}, ...schemaFieldOptions]}
-                                                            value={currentMapping.map_to_schema_field}
-                                                            onChange={(value) => handleMappingChange(p.original_tag, 'map_to_schema_field', value)}
-                                                            placeholder="Select Schema Field"
-                                                            mb="small" // Looker Component prop
-                                                            width="100%"
-                                                            disabled={!currentMapping.map_type.startsWith('standardize')}
-                                                        />
-                                                        <FieldText
-                                                            label="Fallback Value (if field data is empty)"
-                                                            value={currentMapping.fallback_value}
-                                                            onChange={(e) => handleMappingChange(p.original_tag, 'fallback_value', e.target.value)}
-                                                            fontSize="small"
-                                                            detail="Optional: Text to use if the mapped schema field has no value."
-                                                            width="100%"
-                                                        />
-                                                    </>
+                                                    <Select
+                                                        options={[{label: '--- Select Schema Field ---', value: ''}, ...schemaFieldOptions]}
+                                                        value={currentMapping.map_to_schema_field}
+                                                        onChange={(value) => handleMappingChange(p.original_tag, 'map_to_schema_field', value)}
+                                                        placeholder="Select Schema Field"
+                                                        mb="small" width="100%"
+                                                    />
+                                                )}
+                                                {currentMapping.map_type === 'map_to_look' && (
+                                                    <Select
+                                                        options={[{label: '--- Select Look Placeholder ---', value: ''}, ...lookOptions]}
+                                                        value={currentMapping.map_to_look_placeholder}
+                                                        onChange={(value) => handleMappingChange(p.original_tag, 'map_to_look_placeholder', value)}
+                                                        width="100%"
+                                                    />
+                                                )}
+                                                 {currentMapping.map_type === 'map_to_filter' && (
+                                                    <Select
+                                                        options={[{label: '--- Select Filter ---', value: ''}, ...filterOptions]}
+                                                        value={currentMapping.map_to_filter_key}
+                                                        onChange={(value) => handleMappingChange(p.original_tag, 'map_to_filter_key', value)}
+                                                        width="100%"
+                                                    />
                                                 )}
                                                 {currentMapping.map_type === 'static_text' && (
                                                     <FieldText
