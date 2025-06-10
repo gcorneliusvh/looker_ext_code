@@ -895,6 +895,56 @@ async def list_report_definitions_endpoint(bq_client: bigquery.Client = Depends(
         return processed_results
     except Exception as e: print(f"ERROR fetching report definitions: {e}"); raise HTTPException(status_code=500, detail=f"Failed to fetch report definitions: {str(e)}")
 
+@app.delete("/report_definitions/{report_name}", status_code=200)
+async def delete_report_definition(
+    report_name: str,
+    bq_client: bigquery.Client = Depends(get_bigquery_client_dep),
+    gcs_client: storage.Client = Depends(get_storage_client_dep)
+):
+    """
+    Deletes a report definition from BigQuery and its associated templates from GCS.
+    """
+    print(f"INFO: Received request to DELETE report '{report_name}'.")
+
+    # 1. Delete the report definition from BigQuery
+    table_id = f"`{config.gcp_project_id}.report_printing.report_list`"
+    delete_sql = f"DELETE FROM {table_id} WHERE ReportName = @report_name"
+    delete_params = [ScalarQueryParameter("report_name", "STRING", report_name)]
+    
+    try:
+        query_job = bq_client.query(delete_sql, job_config=bigquery.QueryJobConfig(query_parameters=delete_params))
+        query_job.result() # Wait for the query to complete
+        if query_job.num_dml_affected_rows == 0:
+            raise HTTPException(status_code=404, detail=f"Report '{report_name}' not found in BigQuery.")
+        print(f"INFO: Successfully deleted report definition '{report_name}' from BigQuery.")
+    except Exception as e:
+        print(f"ERROR: Failed to delete report '{report_name}' from BigQuery: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete report from BigQuery: {str(e)}")
+
+    # 2. Delete associated report templates from GCS
+    try:
+        report_gcs_path_safe = report_name.replace(" ", "_").replace("/", "_").lower()
+        prefix_to_delete = f"report_templates/{report_gcs_path_safe}/"
+        
+        bucket = gcs_client.bucket(config.GCS_BUCKET_NAME)
+        blobs_to_delete = list(bucket.list_blobs(prefix=prefix_to_delete))
+        
+        if blobs_to_delete:
+            with gcs_client.batch():
+                for blob in blobs_to_delete:
+                    blob.delete()
+            print(f"INFO: Successfully deleted {len(blobs_to_delete)} GCS objects for report '{report_name}' under prefix '{prefix_to_delete}'.")
+        else:
+            print(f"WARN: No GCS objects found to delete for report '{report_name}' under prefix '{prefix_to_delete}'.")
+            
+    except Exception as e:
+        # Don't fail the whole request if GCS cleanup has an issue, but log it.
+        print(f"ERROR: Failed to delete GCS assets for report '{report_name}': {e}")
+        return {"message": f"Report definition '{report_name}' deleted from BigQuery, but an error occurred during GCS cleanup. Please check logs."}
+
+    return {"message": f"Report definition '{report_name}' and its associated templates were successfully deleted."}
+
+
 @app.post("/report_definitions/{report_name}/finalize_template", status_code=200)
 async def finalize_template_with_mappings(
     report_name: str,

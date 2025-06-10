@@ -15,9 +15,10 @@ import {
     InputText,
     FieldSelect,
     Flex,
-    FlexItem
+    FlexItem,
+    useConfirm
 } from '@looker/components';
-import { FilterList, Close, Edit } from '@styled-icons/material';
+import { FilterList, Close, Edit, Delete } from '@styled-icons/material';
 import DynamicFilterUI from './DynamicFilterUI';
 import RefineReportDialog from './RefineReportDialog';
 
@@ -26,6 +27,7 @@ function ViewAllReports({ onSelectReportForFiltering }) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
   const [isExecutingReport, setIsExecutingReport] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const [isFilterModalOpen, setIsFilterModalOpen] = useState(false);
   const [selectedReportForModal, setSelectedReportForModal] = useState(null);
@@ -37,6 +39,7 @@ function ViewAllReports({ onSelectReportForFiltering }) {
   const [sortConfig, setSortConfig] = useState({ type: 'alphabetical', direction: 'asc' });
 
   const { extensionSDK } = useContext(ExtensionContext);
+  const [confirm, openConfirmation] = useConfirm();
 
   const BACKEND_BASE_URL = 'https://looker-ext-code-17837811141.us-central1.run.app';
 
@@ -158,6 +161,41 @@ function ViewAllReports({ onSelectReportForFiltering }) {
     fetchReportDefinitions();
   };
 
+  const handleDeleteReport = async (reportName) => {
+      openConfirmation({
+          title: `Confirm Deletion: ${reportName}`,
+          message: 'Are you sure you want to permanently delete this report definition and all its associated template versions in GCS?',
+          confirmLabel: 'Delete',
+          cancelLabel: 'Cancel',
+          onConfirm: async (close) => {
+              setIsDeleting(true);
+              const backendUrl = `${BACKEND_BASE_URL}/report_definitions/${encodeURIComponent(reportName)}`;
+              try {
+                  const response = await extensionSDK.fetchProxy(backendUrl, {
+                      method: 'DELETE',
+                  });
+
+                  if (!response.ok) {
+                      const errorBody = response.body || { detail: `Request failed with status ${response.status}` };
+                      throw new Error(errorBody.detail || 'Unknown error occurred.');
+                  }
+                  
+                  alert(`Report '${reportName}' deleted successfully.`);
+                  fetchReportDefinitions(); 
+              } catch (err) {
+                  console.error("Error deleting report:", err);
+                  alert(`Failed to delete report: ${err.message}`);
+              } finally {
+                  setIsDeleting(false);
+                  close();
+              }
+          },
+          onCancel: (close) => {
+              close();
+          }
+      });
+  };
+
   const handleFiltersAppliedAndExecute = async (filterCriteriaFromModal) => {
     if (!selectedReportForModal) {
       alert("Error: No report selected for execution.");
@@ -179,18 +217,13 @@ function ViewAllReports({ onSelectReportForFiltering }) {
 
       const responseData = response.body;
 
-      // --- NEW: Robust error handling ---
       if (!response.ok) {
         let errorMessage = `Backend returned an error: ${response.status} ${response.statusText}`;
-        
-        // Safely check if a more specific error detail was provided
         if (responseData && typeof responseData === 'object' && responseData.detail) {
           errorMessage = responseData.detail;
         }
-        
         throw new Error(errorMessage);
       }
-      // --- END of new error handling ---
 
       if (responseData && responseData.report_url_path) {
         const fullReportUrl = BACKEND_BASE_URL + responseData.report_url_path;
@@ -199,7 +232,6 @@ function ViewAllReports({ onSelectReportForFiltering }) {
         throw new Error("Failed to get report URL from backend. The response was successful but malformed.");
       }
     } catch (error) {
-      // This will now display a much clearer error message instead of a TypeError
       console.error("Error executing report:", error);
       alert(`Failed to execute report: ${error.message}`);
     } finally {
@@ -207,10 +239,10 @@ function ViewAllReports({ onSelectReportForFiltering }) {
       closeFilterModal();
     }
   };
+
   const processedReports = useMemo(() => {
     let displayReports = [...reports];
 
-    // Sorting
     if (sortConfig.type === 'alphabetical') {
       displayReports.sort((a, b) => {
         const nameA = a.ReportName || '';
@@ -226,7 +258,6 @@ function ViewAllReports({ onSelectReportForFiltering }) {
       });
     }
 
-    // Filtering
     if (searchTerm.trim() !== '') {
       displayReports = displayReports.filter(report =>
         (report.ReportName || '').toLowerCase().includes(searchTerm.toLowerCase())
@@ -293,13 +324,24 @@ function ViewAllReports({ onSelectReportForFiltering }) {
               description={`Charts: ${report.lookConfigs?.length || 0} | Schema Fields: ${report.schema?.length || 0} | Version: ${report.LatestTemplateVersion || 'N/A'} | Last Mod: ${report.LastGeneratedTimestamp ? new Date(report.LastGeneratedTimestamp).toLocaleString() : 'N/A'}`}
               onClick={() => openFilterModal(report)}
               itemRole="button"
-              disabled={isExecutingReport}
+              disabled={isExecutingReport || isDeleting}
               px="small"
               py="medium"
             >
               <Space between alignItems="center" width="100%">
                 <Text fontSize="medium" fontWeight="medium" truncate>{report.ReportName}</Text>
                 <Space>
+                   <IconButton
+                    icon={<Delete />}
+                    label="Delete Report"
+                    size="small"
+                    tooltip="Delete Report Definition"
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteReport(report.ReportName);
+                    }}
+                    disabled={isExecutingReport || isDeleting}
+                  />
                    <IconButton
                     icon={<Edit />}
                     label="Refine Template"
@@ -309,7 +351,7 @@ function ViewAllReports({ onSelectReportForFiltering }) {
                         e.stopPropagation();
                         openRefineModal(report.ReportName);
                     }}
-                    disabled={isExecutingReport}
+                    disabled={isExecutingReport || isDeleting}
                   />
                   <IconButton
                     icon={<FilterList />}
@@ -320,7 +362,7 @@ function ViewAllReports({ onSelectReportForFiltering }) {
                         e.stopPropagation();
                         openFilterModal(report);
                     }}
-                    disabled={isExecutingReport}
+                    disabled={isExecutingReport || isDeleting}
                   />
                 </Space>
               </Space>
@@ -355,6 +397,7 @@ function ViewAllReports({ onSelectReportForFiltering }) {
             reportName={reportNameToRefine}
         />
       )}
+      {confirm}
     </Box>
   );
 }
