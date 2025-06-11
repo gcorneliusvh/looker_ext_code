@@ -14,14 +14,12 @@ import {
 } from '@looker/components';
 
 const BACKEND_BASE_URL = 'https://looker-ext-code-17837811141.us-central1.run.app';
-
-// This is a placeholder for re-combining the HTML parts upon save
 const SHELL_REPLACEMENT_STRING = '';
 
 function HtmlEditorView({ report, onComplete }) {
     const [bodyContent, setBodyContent] = useState('');
     const [styleContent, setStyleContent] = useState('');
-    const [htmlShell, setHtmlShell] = useState(''); // To store the HTML structure minus the body
+    const [htmlShell, setHtmlShell] = useState('');
     
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
@@ -36,7 +34,6 @@ function HtmlEditorView({ report, onComplete }) {
                 setIsLoading(true);
                 setError('');
                 try {
-                    // Fetch the API Key from backend
                     const configUrl = `${BACKEND_BASE_URL}/api/public_config`;
                     const configResponse = await extensionSDK.fetchProxy(configUrl, { method: 'GET' });
                     if (!configResponse.ok || !configResponse.body.tinymce_api_key) {
@@ -44,7 +41,6 @@ function HtmlEditorView({ report, onComplete }) {
                     }
                     setTinymceApiKey(configResponse.body.tinymce_api_key);
 
-                    // Fetch the full HTML content
                     const getUrl = `${BACKEND_BASE_URL}/report_definitions/${encodeURIComponent(report.ReportName)}/get_html`;
                     const htmlResponse = await extensionSDK.fetchProxy(getUrl, { method: 'GET' });
                     if (!htmlResponse.ok) {
@@ -52,23 +48,19 @@ function HtmlEditorView({ report, onComplete }) {
                     }
                     const fullHtml = htmlResponse.body.html_content || '';
 
-                    // Split the HTML into parts
                     const styleRegex = /<style[^>]*>([\s\S]*?)<\/style>/i;
                     const bodyRegex = /<body[^>]*>([\s\S]*?)<\/body>/i;
-
                     const styleMatch = fullHtml.match(styleRegex);
                     const bodyMatch = fullHtml.match(bodyRegex);
                     
-                    setStyleContent(styleMatch ? styleMatch[1] : '/* No <style> tag found. */');
-                    setBodyContent(bodyMatch ? bodyMatch[1] : '');
+                    setStyleContent(styleMatch ? styleMatch[1].trim() : '/* No <style> tag found. */');
+                    setBodyContent(bodyMatch ? bodyMatch[1].trim() : '');
                     
-                    // Store the shell, replacing the body content with a placeholder
                     let shell = fullHtml;
                     if (bodyMatch) {
                         shell = shell.replace(bodyMatch[1], SHELL_REPLACEMENT_STRING);
                     }
                     if (styleMatch) {
-                        // Also replace style content to avoid duplicating it on save
                         shell = shell.replace(styleMatch[1], ''); 
                     }
                     setHtmlShell(shell);
@@ -87,12 +79,7 @@ function HtmlEditorView({ report, onComplete }) {
         if (editorRef.current) {
             setIsSaving(true);
             const newBodyContent = editorRef.current.getContent();
-
-            // Recombine the HTML parts
-            // 1. Put the new body content back into the shell
             let finalHtml = htmlShell.replace(SHELL_REPLACEMENT_STRING, newBodyContent);
-            
-            // 2. Put the new style content back into the <style> tag
             const styleRegex = /<style[^>]*>([\s\S]*?)<\/style>/i;
             finalHtml = finalHtml.replace(styleRegex, `<style>\n${styleContent}\n</style>`);
             
@@ -162,12 +149,11 @@ function HtmlEditorView({ report, onComplete }) {
                                 menubar: true,
                                 plugins: 'code lists advlist table link help wordcount fullscreen',
                                 toolbar: 'undo redo | blocks | bold italic | bullist numlist | code | fullscreen',
-                                content_css: 'default'
                             }}
                         />
                      )}
                 </FlexItem>
-            </Flex> 
+            </Flex>
         </Box>
     );
 }

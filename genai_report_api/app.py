@@ -768,6 +768,21 @@ def generate_and_save_report_assets(
 async def read_root():
     return {"status": f"GenAI Report API is running! (Target Model: {config.TARGET_GEMINI_MODEL})"}
 
+@app.get("/api/public_config")
+async def get_public_config():
+    """
+    Provides public-facing configuration details to the frontend,
+    such as API keys for third-party services.
+    """
+    # This reads the environment variable set in your Cloud Run service
+    tinymce_api_key = os.getenv("TINYMCE_API_KEY")
+    
+    if not tinymce_api_key:
+        print("WARN: TINYMCE_API_KEY environment variable is not set.")
+        return {"tinymce_api_key": None}
+        
+    return {"tinymce_api_key": tinymce_api_key}
+
 @app.post("/dry_run_sql_for_schema")
 async def dry_run_sql_for_schema_endpoint(
     payload: SqlQueryPayload, bq_client: bigquery.Client = Depends(get_bigquery_client_dep)

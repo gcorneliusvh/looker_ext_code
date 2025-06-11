@@ -4,14 +4,14 @@ import { hot } from 'react-hot-loader/root';
 import { ComponentsProvider, Layout, Page, NavList, ListItem } from '@looker/components';
 import { ExtensionProvider } from '@looker/extension-sdk-react';
 import ReportForm from './ReportForm';
-import ViewAllReports from './ViewAllReports';
+import ViewAllReports from './ViewAllReports'; // CORRECTED: Using the original file name
 import EditSystemInstructions from './EditSystemInstructions';
-import HtmlEditorView from './HtmlEditorView'; // Import the new view
+import HtmlEditorView from './HtmlEditorView';
 
 const App = hot(() => {
     const [activeView, setActiveView] = useState('viewAllReports');
     const [reportToEdit, setReportToEdit] = useState(null);
-    const [reportForHtmlEdit, setReportForHtmlEdit] = useState(null); // State for HTML editor
+    const [reportForHtmlEdit, setReportForHtmlEdit] = useState(null);
 
     const handleSelectView = (view) => {
         setReportToEdit(null);
@@ -39,11 +39,11 @@ const App = hot(() => {
                 return <HtmlEditorView report={reportForHtmlEdit} onComplete={() => handleSelectView('viewAllReports')} />;
             case 'viewAllReports':
             default:
+                // CORRECTED: Using the original component name
                 return <ViewAllReports onEditReport={handleEditReport} onHtmlEdit={handleHtmlEdit} />;
         }
     };
 
-    // Dynamically set the navigation list item text
     let defineReportLabel = 'Add New Report';
     if (activeView === 'defineReport' && reportToEdit) {
         defineReportLabel = 'Edit Definition';
