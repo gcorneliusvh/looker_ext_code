@@ -27,6 +27,7 @@ from vertexai.generative_models import HarmCategory, HarmBlockThreshold, Generat
 
 import looker_sdk
 from looker_sdk import methods40, models40
+import io
 
 # --- AppConfig & Global Configs ---
 class AppConfig:
@@ -1166,18 +1167,18 @@ async def save_report_html(
     gcs_client: storage.Client = Depends(get_storage_client_dep)
 ):
     print(f"--- [SAVE_HTML_DEBUG] Received request for '{report_name}' ---")
-    
+
     # 1. Fetch current version number
     try:
         print("[SAVE_HTML_DEBUG] Step 1: Fetching current version from BigQuery...")
         query_def_sql = f"SELECT LatestTemplateVersion FROM `{config.gcp_project_id}.report_printing.report_list` WHERE ReportName = @report_name_param"
         def_params = [ScalarQueryParameter("report_name_param", "STRING", report_name)]
         results = list(bq_client.query(query_def_sql, job_config=bigquery.QueryJobConfig(query_parameters=def_params)).result())
-        
+
         if not results:
             print(f"[SAVE_HTML_DEBUG] ERROR: Report name '{report_name}' not found in BigQuery.")
             raise HTTPException(status_code=404, detail=f"Report definition not found for '{report_name}'.")
-        
+
         latest_version = results[0].get("LatestTemplateVersion") or 0
         print(f"[SAVE_HTML_DEBUG] Found current version: {latest_version}")
     except Exception as e:
@@ -1195,7 +1196,16 @@ async def save_report_html(
         print(f"[SAVE_HTML_DEBUG] Step 2: Uploading new version to GCS at '{destination_blob_name}'...")
         bucket = gcs_client.bucket(config.GCS_BUCKET_NAME)
         blob = bucket.blob(destination_blob_name)
-        blob.upload_from_string(payload.html_content, content_type='text/html; charset=utf-8')
+
+        # --- THIS IS THE FIX ---
+        # Manually encode the string to bytes, allowing for surrogate characters (like emojis).
+        html_bytes = payload.html_content.encode('utf-8', errors='surrogatepass')
+        # Create a file-like object from the bytes.
+        file_obj = io.BytesIO(html_bytes)
+        # Use upload_from_file, which handles bytes correctly.
+        blob.upload_from_file(file_obj, content_type='text/html; charset=utf-8')
+        # --- END OF FIX ---
+
         print(f"[SAVE_HTML_DEBUG] GCS upload successful.")
     except Exception as e:
         print(f"[SAVE_HTML_DEBUG] FATAL ERROR during GCS upload: {e}")
@@ -1219,89 +1229,6 @@ async def save_report_html(
 
     print(f"--- [SAVE_HTML_DEBUG] Successfully saved version {new_version_number} for '{report_name}' ---")
     return {"message": f"Successfully saved edits as new version {new_version_number}."}
-
-
-
-# In app.py, replace the existing finalize_template_with_mappings function
-
-@app.post("/report_definitions/{report_name}/finalize_template", status_code=200)
-async def finalize_template_with_mappings(
-    report_name: str,
-    payload: FinalizeTemplatePayload,
-    gcs_client: storage.Client = Depends(get_storage_client_dep),
-    bq_client: bigquery.Client = Depends(get_bigquery_client_dep)
-):
-    print(f"INFO: Finalizing template (with placeholder mappings) for report '{report_name}'.")
-    query_def_sql = f"SELECT TemplateURL, LatestTemplateVersion FROM `{config.gcp_project_id}.report_printing.report_list` WHERE ReportName = @report_name_param"
-    def_params = [ScalarQueryParameter("report_name_param", "STRING", report_name)]
-    try:
-        results = list(bq_client.query(query_def_sql, job_config=bigquery.QueryJobConfig(query_parameters=def_params)).result())
-        if not results: raise HTTPException(status_code=404, detail=f"Report definition not found for '{report_name}'.")
-        current_template_gcs_path = results[0].get("TemplateURL")
-        last_version_number = results[0].get("LatestTemplateVersion") or 0
-        if not current_template_gcs_path: raise HTTPException(status_code=404, detail=f"Current TemplateURL not found for '{report_name}'.")
-    except Exception as e: raise HTTPException(status_code=500, detail=f"Error fetching report details: {str(e)}")
-
-    try:
-        path_parts = current_template_gcs_path.replace("gs://", "").split("/", 1)
-        bucket_name, current_blob_name = path_parts[0], path_parts[1]
-        bucket = gcs_client.bucket(bucket_name)
-        template_blob_current = bucket.blob(current_blob_name)
-        if not template_blob_current.exists(): raise HTTPException(status_code=404, detail=f"Template file not found at {current_template_gcs_path}.")
-        current_html_content = template_blob_current.download_as_text(encoding='utf-8')
-    except Exception as e: raise HTTPException(status_code=500, detail=f"Error loading current template from GCS: {str(e)}")
-
-    modified_html_content = current_html_content
-    for mapping in payload.mappings:
-        original_tag_escaped = re.escape(mapping.original_tag)
-        new_tag = ""
-        if mapping.map_type == "ignore":
-            new_tag = "" # Replace with empty string
-        elif mapping.map_type == "static_text" and mapping.static_text_value is not None:
-            new_tag = mapping.static_text_value
-        elif mapping.map_type == "standardize_top" and mapping.map_to_schema_field:
-            new_tag = f"{{{{TOP_{mapping.map_to_schema_field}}}}}"
-        elif mapping.map_type == "standardize_header" and mapping.map_to_schema_field:
-            new_tag = f"{{{{HEADER_{mapping.map_to_schema_field}}}}}"
-        elif mapping.map_type == "map_to_look" and mapping.map_to_look_placeholder:
-            new_tag = f"{{{{{mapping.map_to_look_placeholder}}}}}"
-        elif mapping.map_type == "map_to_filter" and mapping.map_to_filter_key:
-            new_tag = f"{{{{FILTER_{mapping.map_to_filter_key}}}}}"
-        
-        # Only perform replacement if new_tag was set
-        if new_tag or mapping.map_type == "ignore":
-            modified_html_content = re.sub(original_tag_escaped, new_tag, modified_html_content)
-
-    new_version_number = last_version_number + 1
-    report_gcs_path_safe = report_name.replace(" ", "_").replace("/", "_").lower()
-    base_gcs_folder_for_report = f"report_templates/{report_gcs_path_safe}"
-    new_template_filename = f"template_v{new_version_number}.html"
-    new_versioned_gcs_path_str = f"{base_gcs_folder_for_report}/{new_template_filename}"
-
-    try:
-        new_template_blob = bucket.blob(new_versioned_gcs_path_str)
-        new_template_blob.upload_from_string(modified_html_content, content_type='text/html; charset=utf-8')
-    except Exception as e: raise HTTPException(status_code=500, detail=f"Failed to save finalized (v{new_version_number}) template to GCS: {str(e)}")
-
-    mappings_json_to_save = json.dumps([m.model_dump(exclude_unset=True) for m in payload.mappings], indent=2)
-    table_id = f"`{config.gcp_project_id}.report_printing.report_list`"
-    update_sql = f"""
-        UPDATE {table_id}
-        SET TemplateURL = @new_template_url, LatestTemplateVersion = @new_version,
-            UserPlaceholderMappingsJSON = @mappings_json, LastGeneratedTimestamp = CURRENT_TIMESTAMP()
-        WHERE ReportName = @report_name
-    """
-    update_params = [
-        ScalarQueryParameter("new_template_url", "STRING", f"gs://{bucket_name}/{new_versioned_gcs_path_str}"),
-        ScalarQueryParameter("new_version", "INT64", new_version_number),
-        ScalarQueryParameter("mappings_json", "STRING", mappings_json_to_save),
-        ScalarQueryParameter("report_name", "STRING", report_name),
-    ]
-    try:
-        job = bq_client.query(update_sql, job_config=bigquery.QueryJobConfig(query_parameters=update_params)); job.result()
-    except Exception as e: print(f"ERROR: Failed to update BigQuery for finalized template v{new_version_number} for '{report_name}': {str(e)}")
-
-    return {"message": f"Template for report '{report_name}' finalized to v{new_version_number} and mappings saved.", "new_template_gcs_path": f"gs://{bucket_name}/{new_versioned_gcs_path_str}"}
 
 @app.post("/report_definitions/{report_name}/refine_template", response_model=RefinementResponse)
 async def refine_report_template_oneshot(
