@@ -371,6 +371,8 @@ def calculate_aggregate(data_list: List[Decimal], agg_type_str_param: Optional[s
 # --- Background Task Function for Report Generation ---
 # In app.py
 
+# In app.py, replace the existing generate_and_save_report_assets function
+
 def generate_and_save_report_assets(
     payload: ReportDefinitionPayload,
     bq_client: bigquery.Client,
@@ -382,13 +384,10 @@ def generate_and_save_report_assets(
 
         prompt_for_template = payload.prompt
         all_schemas_for_bq_save = {}
-        
         for table_config in payload.data_tables:
             table_placeholder = table_config.table_placeholder_name
-            
             schema_from_dry_run_list = []
             try:
-                # CORRECTED: Use the bq_client variable passed into the function
                 dry_run_job = bq_client.query(table_config.sql_query, job_config=bigquery.QueryJobConfig(dry_run=True, use_query_cache=False))
                 if dry_run_job.schema:
                     for field in dry_run_job.schema:
@@ -398,12 +397,10 @@ def generate_and_save_report_assets(
             except Exception as e:
                 print(f"WARN: Dry run failed for table '{table_placeholder}'. Skipping. Error: {e}")
                 continue
-
             schema_for_gemini_prompt_str = ", ".join([f"`{f['name']}` (Type: {f['type']})" for f in schema_from_dry_run_list])
             prompt_for_template += f"\n\n--- Data Table: `{table_placeholder}` ---\n"
             prompt_for_template += f"Use the exact placeholder `{{{{TABLE_ROWS_{table_placeholder}}}}}` for this table's body rows.\n"
             prompt_for_template += f"Schema: {schema_for_gemini_prompt_str}\n"
-
             if table_config.field_display_configs:
                 prompt_for_template += "Field Display & Summary Instructions:\n"
                 for config_item in table_config.field_display_configs:
@@ -412,7 +409,6 @@ def generate_and_save_report_assets(
                     if style_hints: field_info += f" (Styling: {'; '.join(style_hints)})"
                     prompt_for_template += f"{field_info}\n"
             prompt_for_template += "--- End Data Table ---"
-
         if payload.look_configs:
             prompt_for_template += "\n\n--- Chart Image Placeholders ---\nPlease include placeholders for the following charts where you see fit in the layout. Use these exact placeholder names:\n"
             for look_config in payload.look_configs:
@@ -422,7 +418,6 @@ def generate_and_save_report_assets(
         img_response = httpx.get(payload.image_url, timeout=180.0)
         img_response.raise_for_status()
         image_bytes_data, image_mime_type_data = img_response.content, img_response.headers.get("Content-Type", "application/octet-stream").lower()
-
         html_template_content = generate_html_from_user_pattern(prompt_text=prompt_for_template, image_bytes=image_bytes_data, image_mime_type=image_mime_type_data, system_instruction_text=config.default_system_instruction_text)
         if not html_template_content or not html_template_content.strip():
             html_template_content = "<html><body><p>Error: AI failed to generate valid HTML.</p></body></html>"
@@ -430,12 +425,10 @@ def generate_and_save_report_assets(
         report_gcs_path_safe = report_name.replace(" ", "_").replace("/", "_").lower()
         base_gcs_folder = f"report_templates/{report_gcs_path_safe}"
         versioned_template_gcs_path_str = f"{base_gcs_folder}/template_v1.html"
-        
         bucket = gcs_client.bucket(config.GCS_BUCKET_NAME)
         bucket.blob(versioned_template_gcs_path_str).upload_from_string(html_template_content, content_type='text/html; charset=utf-8')
         
         user_attribute_mappings_json_str = json.dumps(payload.user_attribute_mappings or {})
-        
         data_tables_json_to_save = json.dumps([dt.model_dump() for dt in payload.data_tables], indent=2)
         schema_json_to_save = json.dumps(all_schemas_for_bq_save, indent=2)
         look_configs_json_to_save = json.dumps([lc.model_dump() for lc in payload.look_configs], indent=2) if payload.look_configs else "[]"
@@ -445,6 +438,7 @@ def generate_and_save_report_assets(
 
         table_id = f"`{config.gcp_project_id}.report_printing.report_list`"
         
+        # This MERGE statement is reverted to its original form, without HeaderText/FooterText
         merge_sql = f"""
         MERGE {table_id} T
         USING (SELECT @report_name AS ReportName) S ON T.ReportName = S.ReportName
@@ -468,6 +462,7 @@ def generate_and_save_report_assets(
             ScalarQueryParameter("subtotal_configs_json", "STRING", subtotal_configs_json_to_save),
             ScalarQueryParameter("user_attribute_mappings_json", "STRING", user_attribute_mappings_json_str),
         ]
+        
         bq_client.query(merge_sql, job_config=bigquery.QueryJobConfig(query_parameters=merge_params)).result()
         
         print(f"BACKGROUND_TASK: Finished generation for report: '{report_name}'")
@@ -1333,8 +1328,6 @@ ALL placeholders for dynamic data MUST use double curly braces, e.g., {{{{YourPl
     )
 # In app.py, replace the existing execute_report_and_get_url function
 
-# In app.py, replace the existing execute_report_and_get_url function
-
 @app.post("/execute_report")
 async def execute_report_and_get_url(
     payload: ExecuteReportPayload,
@@ -1347,10 +1340,11 @@ async def execute_report_and_get_url(
     filter_criteria_json_str = payload.filter_criteria_json
     print(f"INFO: POST /execute_report for '{report_definition_name}'. Filters JSON: {filter_criteria_json_str}")
 
-    # --- 1. Fetch and Parse Report Definition (Unchanged) ---
+    # --- 1. Fetch and Parse Report Definition ---
+    # Reverted to not select HeaderText or FooterText
     query_def_sql_exec = f"""
         SELECT SQL, TemplateURL, UserAttributeMappingsJSON, BaseQuerySchemaJSON, FilterConfigsJSON,
-               LookConfigsJSON, CalculationRowConfigsJSON, UserPlaceholderMappingsJSON, HeaderText, FooterText
+               LookConfigsJSON, CalculationRowConfigsJSON, UserPlaceholderMappingsJSON
         FROM `{config.gcp_project_id}.report_printing.report_list` WHERE ReportName = @report_name_param
     """
     def_params_exec = [ScalarQueryParameter("report_name_param", "STRING", report_definition_name)]
@@ -1363,8 +1357,6 @@ async def execute_report_and_get_url(
         data_tables_json = row_exec.get("SQL")
         html_template_gcs_path = row_exec.get("TemplateURL")
         look_configs_json = row_exec.get("LookConfigsJSON")
-        header_text = row_exec.get("HeaderText")
-        footer_text = row_exec.get("FooterText")
         all_schemas = json.loads(row_exec.get("BaseQuerySchemaJSON") or '{}')
         parsed_calculation_row_configs = [CalculationRowConfig(**item) for item in json.loads(row_exec.get("CalculationRowConfigsJSON") or '[]')]
         parsed_filter_configs = json.loads(row_exec.get("FilterConfigsJSON") or '[]')
@@ -1384,7 +1376,7 @@ async def execute_report_and_get_url(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load HTML template: {str(e)}")
 
-    # --- 2. Build Filter Logic & Replace General Placeholders (Unchanged) ---
+    # --- 2. Build Filter Logic & Replace Filter Placeholders ---
     try:
         looker_filters_payload_exec = json.loads(filter_criteria_json_str or "{}")
     except json.JSONDecodeError as e:
@@ -1398,9 +1390,7 @@ async def execute_report_and_get_url(
             replacement_value = str(user_filter_values.get(filter_key, ""))
             populated_html = populated_html.replace(placeholder_tag, replacement_value)
 
-    # Replace Header and Footer text placeholders
-    populated_html = populated_html.replace('{{HEADER_TEXT}}', header_text or '')
-    populated_html = populated_html.replace('{{FOOTER_TEXT}}', footer_text or '')
+    # Header/Footer text replacement logic is removed.
 
     current_query_params_for_bq_exec = []; param_idx_exec = 0
     base_conditions = []
@@ -1421,47 +1411,56 @@ async def execute_report_and_get_url(
                     base_conditions.append({'col': bq_col, 'op': op_conf['op'], 'p_name': None})
             except ValueError as ve: print(f"WARN: Skipping Dyn filter '{bq_col}': {ve}")
 
-    # --- 3. Loop through Data Tables (Unchanged) ---
+    # --- 3. Loop through each Data Table to execute and render ---
     for table_idx, table_config in enumerate(data_tables_configs):
-        # ... This entire loop for processing data tables is unchanged ...
         table_placeholder_name = table_config.table_placeholder_name
         base_sql_query = table_config.sql_query
         field_configs_list = table_config.field_display_configs
+        
         if not table_placeholder_name or not base_sql_query: continue
+            
         field_configs_map = {fc.field_name: fc for fc in field_configs_list}
         schema_for_table = all_schemas.get(table_placeholder_name, [])
         if not schema_for_table:
             print(f"WARN: No schema found for data table '{table_placeholder_name}' in BaseQuerySchemaJSON. Skipping.")
             continue
+            
         schema_type_map = {f['name']: f['type'] for f in schema_for_table}
         body_field_names_in_order = [f['name'] for f in schema_for_table if (field_configs_map.get(f['name']) or FieldDisplayConfig(field_name=f['name'])).include_in_body]
+        
         final_sql = base_sql_query
         table_conditions = []
         for cond in base_conditions:
             if cond['col'] in schema_type_map:
                 if cond['p_name']: table_conditions.append(f"`{cond['col']}` {cond['op']} @{cond['p_name']}")
                 else: table_conditions.append(f"`{cond['col']}` {cond['op']}")
+        
         if table_conditions:
             conditions_sql_segment = " AND ".join(table_conditions)
             if " where " in final_sql.lower(): final_sql += f" AND ({conditions_sql_segment})"
             else: final_sql = f"SELECT * FROM ({final_sql}) AS GenAIReportSubquery WHERE {conditions_sql_segment}"
+
         try:
+            print(f"INFO: Executing BQ Query for table '{table_placeholder_name}':\n{final_sql}")
             job_cfg_exec = bigquery.QueryJobConfig(query_parameters=current_query_params_for_bq_exec)
             query_job = bq_client.query(final_sql, job_config=job_cfg_exec)
             data_rows_list = [convert_row_to_json_serializable(row) for row in query_job.result()] if query_job else []
         except Exception as e:
             print(f"ERROR: BQ execution for table '{table_placeholder_name}': {str(e)}")
             data_rows_list = []
+
         table_rows_html_str = ""
         group_by_field = next((fc.field_name for fc in field_configs_list if fc.group_summary_action in ['SUBTOTAL_ONLY', 'SUBTOTAL_AND_GRAND_TOTAL']), None)
         agg_fields = {fc.field_name: fc.numeric_aggregation for fc in field_configs_list if fc.numeric_aggregation and schema_type_map.get(fc.field_name) in NUMERIC_TYPES_FOR_AGG}
         grand_total_needed = any(fc.group_summary_action in ['GRAND_TOTAL_ONLY', 'SUBTOTAL_AND_GRAND_TOTAL'] for fc in field_configs_list)
         grand_total_accumulators = {f: [] for f in agg_fields}
+        
         if not data_rows_list:
             colspan = len(body_field_names_in_order) or 1
             table_rows_html_str = f"<tr><td colspan='{colspan}' style='text-align:center; padding: 20px;'>No data returned for this table.</td></tr>"
         else:
             current_group_val, subtotal_accumulators = None, {f: [] for f in agg_fields}
+
             for row_idx, row_data in enumerate(data_rows_list):
                 is_first_row_of_group = False
                 if group_by_field:
@@ -1478,6 +1477,7 @@ async def execute_report_and_get_url(
                         table_rows_html_str += subtotal_html
                         subtotal_accumulators = {f: [] for f in agg_fields}
                     current_group_val = new_group_val
+                
                 for field, agg_type in agg_fields.items():
                     val = row_data.get(field)
                     if val is not None:
@@ -1486,17 +1486,21 @@ async def execute_report_and_get_url(
                             if group_by_field: subtotal_accumulators[field].append(dec_val)
                             if grand_total_needed: grand_total_accumulators[field].append(dec_val)
                         except InvalidOperation: pass
+
                 row_html_item = "<tr>"
                 for col_idx, header_key in enumerate(body_field_names_in_order):
                     field_config = field_configs_map.get(header_key) or FieldDisplayConfig(field_name=header_key)
                     cell_value = row_data.get(header_key)
                     formatted_val = format_value(cell_value, field_config.number_format, schema_type_map.get(header_key, "STRING"))
+                    
                     if group_by_field and header_key == group_by_field and field_config.repeat_group_value == 'SHOW_ON_CHANGE' and not is_first_row_of_group:
                         formatted_val = ''
+
                     align_val = field_config.alignment or "left"
                     row_html_item += f"  <td style='text-align: {align_val};'>{formatted_val}</td>"
                 row_html_item += "</tr>\n"
                 table_rows_html_str += row_html_item
+
             if group_by_field and data_rows_list:
                 subtotal_html = f"<tr class='subtotal-row' style='font-weight: bold; background-color: #f2f2f2;'><td style='text-align: right;' colspan='{len(body_field_names_in_order) - len(agg_fields)}'>Subtotal for {current_group_val}:</td>"
                 for field_name in body_field_names_in_order:
@@ -1506,6 +1510,7 @@ async def execute_report_and_get_url(
                         subtotal_html += f"<td style='text-align: {config.alignment or 'right'};'>{format_value(result, config.number_format, schema_type_map.get(field_name))}</td>"
                 subtotal_html += "</tr>"
                 table_rows_html_str += subtotal_html
+
             if grand_total_needed and data_rows_list:
                 gt_html = f"<tr class='grand-total-row' style='font-weight: bold; border-top: 2px solid black; background-color: #e0e0e0;'><td style='text-align: right;' colspan='{len(body_field_names_in_order) - len(agg_fields)}'>Grand Total:</td>"
                 for field_name in body_field_names_in_order:
@@ -1515,6 +1520,7 @@ async def execute_report_and_get_url(
                         gt_html += f"<td style='text-align: {config.alignment or 'right'};'>{format_value(result, config.number_format, schema_type_map.get(field_name))}</td>"
                 gt_html += "</tr>"
                 table_rows_html_str += gt_html
+
             if table_idx == 0 and parsed_calculation_row_configs:
                 for calc_config in parsed_calculation_row_configs:
                     placeholder_in_template_regex = r"\{\{\s*" + re.escape(calc_config.values_placeholder_name) + r"\s*\}\}"
@@ -1526,6 +1532,7 @@ async def execute_report_and_get_url(
                             agg_html = format_value(agg_result, value_conf.number_format, schema_type_map.get(value_conf.target_field_name))
                             td_outputs += f"<td style='text-align: {value_conf.alignment or 'right'};'>{agg_html}</td>"
                         populated_html = re.sub(placeholder_in_template_regex, td_outputs, populated_html)
+
         placeholder_to_replace = f"{{{{TABLE_ROWS_{table_placeholder_name}}}}}"
         populated_html = populated_html.replace(placeholder_to_replace, table_rows_html_str)
 
@@ -1533,23 +1540,30 @@ async def execute_report_and_get_url(
     if look_configs_json:
         look_configs = json.loads(look_configs_json)
         for look_config in look_configs:
+            look_id = look_config.get('look_id') or look_config.get('lookId')
+            placeholder_name = look_config.get('placeholder_name') or look_config.get('placeholderName')
+
+            if not look_id or not placeholder_name:
+                print(f"WARN: Skipping a look configuration due to missing 'look_id' or 'placeholder_name'. Config: {look_config}")
+                continue
+            
             try:
                 look_filters_for_sdk = {}
                 for fc in parsed_filter_configs:
                     ui_key = fc.get('ui_filter_key')
                     if ui_key in user_filter_values:
                         for target in fc.get('targets', []):
-                            if target.get('target_type') == 'LOOK' and str(target.get('target_id')) == str(look_config['look_id']):
+                            if target.get('target_type') == 'LOOK' and str(target.get('target_id')) == str(look_id):
                                 look_filter_name = target.get('target_field_name')
                                 filter_value = user_filter_values[ui_key]
                                 if look_filter_name and filter_value is not None:
                                     look_filters_for_sdk[look_filter_name] = str(filter_value)
                 
-                print(f"INFO: Rendering Look ID {look_config['look_id']} with new filters: {look_filters_for_sdk}")
+                print(f"INFO: Rendering Look ID {look_id} with new filters: {look_filters_for_sdk}")
 
-                look = looker_sdk.look(look_id=str(look_config['look_id']))
+                look = looker_sdk.look(look_id=str(look_id))
                 if not look or not look.query:
-                    raise Exception(f"Look {look_config['look_id']} or its query could not be fetched.")
+                    raise Exception(f"Look {look_id} or its query could not be fetched.")
 
                 new_query = look.query
                 if not new_query.filters: new_query.filters = {}
@@ -1566,26 +1580,20 @@ async def execute_report_and_get_url(
                 base64_image = base64.b64encode(image_bytes).decode('utf-8')
                 image_src_data_uri = f"data:image/png;base64,{base64_image}"
 
-                # --- MODIFICATION START: Robust <img> tag replacement ---
-                placeholder_tag = f"{{{{{look_config['placeholder_name']}}}}}"
+                placeholder_tag = f"{{{{{placeholder_name}}}}}"
                 full_img_tag = f'<img src="{image_src_data_uri}" style="max-width:100%; height:auto;" />'
 
-                # To prevent nesting, first find/replace any <img> tag that might be wrapping the placeholder.
-                # This regex looks for <img ... src="{{placeholder}}" ... > and replaces the whole thing with the placeholder.
                 wrapped_placeholder_regex = re.compile(f'<img[^>]*src=[\'"]{re.escape(placeholder_tag)}[\'"][^>]*>', re.IGNORECASE)
                 populated_html = wrapped_placeholder_regex.sub(placeholder_tag, populated_html)
-
-                # Now that we're sure only the bare placeholder exists, replace it with the complete <img> tag.
                 populated_html = populated_html.replace(placeholder_tag, full_img_tag)
-                # --- MODIFICATION END ---
 
             except Exception as e:
-                placeholder_tag = f"{{{{{look_config.get('placeholder_name', 'unknown_placeholder')}}}}}"
+                placeholder_tag = f"{{{{{placeholder_name}}}}}"
                 error_message = f"Error rendering chart: {e}"
-                print(f"ERROR: Failed to render Look {look_config.get('look_id', 'N/A')}: {e}")
+                print(f"ERROR: Failed to render Look {look_id}: {e}")
                 populated_html = populated_html.replace(placeholder_tag, error_message)
 
-    # --- Final GCS Upload block (Unchanged) ---
+    # --- Final GCS Upload block ---
     try:
         report_id = str(uuid.uuid4())
         output_gcs_blob_name = f"{config.GCS_GENERATED_REPORTS_PREFIX}{report_id}.html"

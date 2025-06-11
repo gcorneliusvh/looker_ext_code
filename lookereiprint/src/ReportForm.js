@@ -46,7 +46,6 @@ const Button = styled.button`
   font-size: 16px;
   font-weight: bold;
   transition: background-color 0.2s ease-in-out;
-
   &:hover { background-color: #357ae8; }
   &:disabled { background-color: #ccc; cursor: not-allowed; }
 `;
@@ -58,7 +57,6 @@ const DynamicSection = styled(Box)`
 `;
 // --- End of Styled Components ---
 
-// CORRECTED: Use 'table_placeholder_name' to match the backend model
 const getInitialDataTables = () => ([{ id: uuidv4(), table_placeholder_name: '', sql_query: '', fieldConfigs: [] }]);
 
 function ReportForm({ reportToEdit, onComplete }) {
@@ -69,29 +67,24 @@ function ReportForm({ reportToEdit, onComplete }) {
   const [dataTables, setDataTables] = useState(getInitialDataTables());
   const [lookConfigs, setLookConfigs] = useState([]);
   const [filterConfigs, setFilterConfigs] = useState([]);
-  
   const [isFieldConfigModalOpen, setIsFieldConfigModalOpen] = useState(false);
   const [configuringTableId, setConfiguringTableId] = useState(null);
   const [currentSchemaForConfig, setCurrentSchemaForConfig] = useState([]);
-  
   const [dryRunLoading, setDryRunLoading] = useState(false);
   const [dryRunError, setDryRunError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitStatus, setSubmitStatus] = useState('');
-
   const { extensionSDK } = useContext(ExtensionContext);
   const backendBaseUrl = 'https://looker-ext-code-17837811141.us-central1.run.app';
-  
   const isEditing = !!reportToEdit;
 
   const isFormValid = useMemo(() => {
     if (!reportName.trim() || !imageUrl.trim() || !promptText.trim()) {
-      return false;
+        return false;
     }
     if (dataTables.length === 0) {
-      return false;
+        return false;
     }
-    // CORRECTED: Check for 'table_placeholder_name'
     return dataTables.every(dt => dt.table_placeholder_name && dt.table_placeholder_name.trim() && dt.sql_query && dt.sql_query.trim());
   }, [reportName, imageUrl, promptText, dataTables]);
 
@@ -108,23 +101,18 @@ function ReportForm({ reportToEdit, onComplete }) {
 
   useEffect(() => {
     if (reportToEdit) {
-        console.log("Populating form with report to edit:", reportToEdit);
         setReportName(reportToEdit.ReportName || '');
         setImageUrl(reportToEdit.ScreenshotURL || '');
         setPromptText(reportToEdit.Prompt || '');
         setUserAttributeMappings(JSON.stringify(reportToEdit.UserAttributeMappings || {}, null, 2));
-        
         setDataTables(reportToEdit.DataTables.map(dt => ({ ...dt, id: uuidv4() })) || getInitialDataTables());
         setLookConfigs(reportToEdit.LookConfigs.map(lc => ({ ...lc, id: uuidv4() })) || []);
         setFilterConfigs(reportToEdit.FilterConfigs.map(fc => ({ ...fc, id: uuidv4(), targets: fc.targets.map(t => ({...t, id: uuidv4()})) })) || []);
-
     } else {
-        console.log("Resetting form for new report.");
         resetForm();
     }
   }, [reportToEdit]);
 
-  // CORRECTED: Use 'table_placeholder_name'
   const handleAddDataTable = () => setDataTables(prev => [...prev, { id: uuidv4(), table_placeholder_name: '', sql_query: '', fieldConfigs: [] }]);
   const handleRemoveDataTable = (id) => setDataTables(prev => prev.filter(t => t.id !== id));
   const handleDataTableChange = (id, fieldName, value) => setDataTables(prev => prev.map(t => t.id === id ? { ...t, [fieldName]: value } : t));
@@ -139,57 +127,55 @@ function ReportForm({ reportToEdit, onComplete }) {
   const handleTargetChange = (filterId, targetId, field, value) => setFilterConfigs(prev => prev.map(f => f.id === filterId ? { ...f, targets: f.targets.map(t => t.id === targetId ? { ...t, [field]: value } : t) } : f));
   const handleDryRunAndConfigure = async (tableId, sqlQuery) => {
     if (!sqlQuery || !sqlQuery.trim()) { alert("SQL query for this table cannot be empty."); return; }
-    setDryRunLoading(true); setDryRunError(''); setConfiguringTableId(tableId);
+    setDryRunLoading(true);
+    setDryRunError('');
+    setConfiguringTableId(tableId);
     try {
       const response = await extensionSDK.fetchProxy(`${backendBaseUrl}/dry_run_sql_for_schema`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sql_query: sqlQuery }) });
       const data = response.body;
       if (response.ok && data?.schema) {
         setCurrentSchemaForConfig(data.schema);
         setIsFieldConfigModalOpen(true);
-      } else { throw new Error(data?.detail || "Dry run failed."); }
-    } catch (error) { setDryRunError(`Dry run failed: ${error.message}`);
-    } finally { setDryRunLoading(false); }
+      } else {
+        throw new Error(data?.detail || "Dry run failed.");
+      }
+    } catch (error) {
+      setDryRunError(`Dry run failed: ${error.message}`);
+    } finally {
+      setDryRunLoading(false);
+    }
   };
   const handleApplyFieldConfigs = (configs) => {
     setDataTables(prev => prev.map(t => t.id === configuringTableId ? { ...t, fieldConfigs: configs } : t));
     handleCloseConfigModal();
   };
-  const handleCloseConfigModal = () => { setIsFieldConfigModalOpen(false); setConfiguringTableId(null); setCurrentSchemaForConfig([]); };
+  const handleCloseConfigModal = () => {
+    setIsFieldConfigModalOpen(false);
+    setConfiguringTableId(null);
+    setCurrentSchemaForConfig([]);
+  };
+  
   const handleSubmitDefinition = async () => {
     setIsSubmitting(true);
     setSubmitStatus('Submitting definition...');
-
     try {
       const parsedUserAttributeMappings = JSON.parse(userAttributeMappings || '{}');
-      
-      const dataTablesPayload = dataTables
-        .filter(dt => dt.table_placeholder_name && dt.sql_query)
-        .map(dt => ({
-            table_placeholder_name: dt.table_placeholder_name,
-            sql_query: dt.sql_query,
-            field_display_configs: dt.fieldConfigs || [],
+      const dataTablesPayload = dataTables.filter(dt => dt.table_placeholder_name && dt.sql_query).map(dt => ({
+        table_placeholder_name: dt.table_placeholder_name,
+        sql_query: dt.sql_query,
+        field_display_configs: dt.fieldConfigs || [],
       }));
-
-      const looksPayload = lookConfigs
-        .filter(lc => lc.lookId && lc.placeholderName)
-        .map(lc => ({
-            look_id: parseInt(lc.lookId, 10),
-            placeholder_name: lc.placeholderName,
+      const looksPayload = lookConfigs.filter(lc => lc.lookId && lc.placeholderName).map(lc => ({
+        look_id: parseInt(lc.lookId, 10),
+        placeholder_name: lc.placeholderName,
       }));
-
-      const filtersPayload = filterConfigs
-        .filter(f => f.ui_filter_key && f.ui_label)
-        .map(({ id, targets, ...rest }) => ({
-          ...rest,
-          targets: targets
-            .filter(t => t.target_id && t.target_field_name)
-            .map(({ id, ...tRest }) => tRest)
-        }));
-
+      const filtersPayload = filterConfigs.filter(f => f.ui_filter_key && f.ui_label).map(({ id, targets, ...rest }) => ({
+        ...rest,
+        targets: targets.filter(t => t.target_id && t.target_field_name).map(({ id, ...tRest }) => tRest)
+      }));
       if (dataTablesPayload.length === 0) {
         throw new Error("You must define at least one data table with a placeholder name and SQL query.");
       }
-
       const definitionPayload = {
         report_name: reportName,
         image_url: imageUrl,
@@ -201,26 +187,20 @@ function ReportForm({ reportToEdit, onComplete }) {
         calculation_row_configs: [],
         subtotal_configs: [],
       };
-      
       console.log('--- Frontend Payload Sent ---', JSON.stringify(definitionPayload, null, 2));
-
       const response = await extensionSDK.fetchProxy(`${backendBaseUrl}/report_definitions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(definitionPayload)
       });
-
       if (!response.ok) {
         const errorBody = response.body || { detail: `Request failed with status ${response.status}` };
         throw new Error(errorBody.detail || "Unknown error occurred.");
       }
-      
       setSubmitStatus(`Success! Report '${reportName}' ${isEditing ? 'updated' : 'submitted'}.`);
-      
       if (onComplete) {
-          setTimeout(onComplete, 1500);
+        setTimeout(onComplete, 1500);
       }
-
     } catch (error) {
       const errorMessage = `Failed to submit. Please check your inputs, especially the User Attribute Mappings JSON.\n\nError: ${error.message}`;
       setSubmitStatus(errorMessage);
@@ -233,14 +213,8 @@ function ReportForm({ reportToEdit, onComplete }) {
   return (
     <FormWrapper>
       <Space between>
-        <Heading as="h1" mb="large">
-            {isEditing ? `Edit: ${reportToEdit.ReportName}` : 'Define New GenAI Report'}
-        </Heading>
-        {isEditing && (
-            <ButtonTransparent onClick={resetForm} disabled={isSubmitting}>
-                + Create New Report
-            </ButtonTransparent>
-        )}
+        <Heading as="h1" mb="large">{isEditing ? `Edit: ${reportToEdit.ReportName}` : 'Define New GenAI Report'}</Heading>
+        {isEditing && (<ButtonTransparent onClick={resetForm} disabled={isSubmitting}>+ Create New Report</ButtonTransparent>)}
       </Space>
       
       <Tabs>
@@ -269,9 +243,11 @@ function ReportForm({ reportToEdit, onComplete }) {
               <Heading as="h2" fontSize="large" fontWeight="semiBold" mb="small">Data Tables</Heading>
               {dataTables.map((table, index) => (
                 <DynamicSection key={table.id}>
-                  <Box display="flex" justifyContent="space-between" alignItems="center"><Heading as="h3" fontSize="medium">Data Table {index + 1}</Heading><IconButton icon={<Delete />} label="Remove Data Table" onClick={() => handleRemoveDataTable(table.id)} disabled={dataTables.length <= 1}/></Box>
+                  <Box display="flex" justifyContent="space-between" alignItems="center">
+                    <Heading as="h3" fontSize="medium">Data Table {index + 1}</Heading>
+                    <IconButton icon={<Delete />} label="Remove Data Table" onClick={() => handleRemoveDataTable(table.id)} disabled={dataTables.length <= 1}/>
+                  </Box>
                   <Space>
-                    {/* CORRECTED: Use table.table_placeholder_name and update it onChange */}
                     <FieldText label="Table Placeholder Name" description="e.g., sales_summary_table" value={table.table_placeholder_name || ''} onChange={(e) => handleDataTableChange(table.id, 'table_placeholder_name', e.target.value)} disabled={isSubmitting}/>
                     <LookerButton mt="large" onClick={() => handleDryRunAndConfigure(table.id, table.sql_query)} disabled={dryRunLoading || isSubmitting || !table.sql_query || !table.sql_query.trim()} iconBefore={dryRunLoading && configuringTableId === table.id ? <Spinner size={18}/> : undefined}>Configure Columns</LookerButton>
                   </Space>
@@ -288,7 +264,10 @@ function ReportForm({ reportToEdit, onComplete }) {
               <Heading as="h2" fontSize="large" fontWeight="semiBold" mb="small">Embed Looks</Heading>
               {lookConfigs.map((config, index) => (
                 <DynamicSection key={config.id}>
-                  <Box display="flex" justifyContent="space-between" alignItems="center"><Heading as="h3" fontSize="medium">Chart {index + 1}</Heading><IconButton icon={<Delete />} label="Remove Chart" onClick={() => handleRemoveLookConfig(config.id)} /></Box>
+                  <Box display="flex" justifyContent="space-between" alignItems="center">
+                    <Heading as="h3" fontSize="medium">Chart {index + 1}</Heading>
+                    <IconButton icon={<Delete />} label="Remove Chart" onClick={() => handleRemoveLookConfig(config.id)} />
+                  </Box>
                   <Space>
                     <FieldText label="Look ID" value={config.lookId} onChange={(e) => handleLookConfigChange(config.id, 'lookId', e.target.value)} placeholder="e.g., 123" type="number" disabled={isSubmitting}/>
                     <FieldText label="Placeholder Name" value={config.placeholderName} onChange={(e) => handleLookConfigChange(config.id, 'placeholderName', e.target.value)} placeholder="e.g., sales_trend_chart" description="Use letters, numbers, underscores" disabled={isSubmitting}/>
@@ -304,15 +283,20 @@ function ReportForm({ reportToEdit, onComplete }) {
               <Description>Define user-facing filters and map them to data tables and Looks.</Description>
               {filterConfigs.map((filter, index) => (
                 <DynamicSection key={filter.id}>
-                  <Box display="flex" justifyContent="space-between" alignItems="center"><Heading as="h3" fontSize="medium">Filter {index + 1}</Heading><IconButton icon={<Delete/>} label="Remove Filter" onClick={() => handleRemoveFilter(filter.id)}/></Box>
-                  <Space><FieldText label="UI Label" value={filter.ui_label} onChange={e => handleFilterChange(filter.id, 'ui_label', e.target.value)} placeholder="e.g., Select Date Range" /><FieldText label="Filter Key" value={filter.ui_filter_key} onChange={e => handleFilterChange(filter.id, 'ui_filter_key', e.target.value)} placeholder="e.g., date_range_filter" /></Space>
+                  <Box display="flex" justifyContent="space-between" alignItems="center">
+                    <Heading as="h3" fontSize="medium">Filter {index + 1}</Heading>
+                    <IconButton icon={<Delete/>} label="Remove Filter" onClick={() => handleRemoveFilter(filter.id)}/>
+                  </Box>
+                  <Space>
+                    <FieldText label="UI Label" value={filter.ui_label} onChange={e => handleFilterChange(filter.id, 'ui_label', e.target.value)} placeholder="e.g., Select Date Range" />
+                    <FieldText label="Filter Key" value={filter.ui_filter_key} onChange={e => handleFilterChange(filter.id, 'ui_filter_key', e.target.value)} placeholder="e.g., date_range_filter" />
+                  </Space>
                   <FieldCheckbox label="Hide from Customer View" checked={filter.is_hidden_from_customer} onChange={e => handleFilterChange(filter.id, 'is_hidden_from_customer', e.target.checked)} />
                   <Box mt="medium" pt="small" borderTop="1px solid" borderColor="ui1">
                     <Heading as="h4" fontSize="small" color="text3">Filter Targets</Heading>
                     {filter.targets.map((target) => (
                       <Space key={target.id} my="small" align="flex-end">
                         <Select value={target.target_type} onChange={val => handleTargetChange(filter.id, target.id, 'target_type', val)} options={[{value:'DATA_TABLE', label:'Data Table'}, {value:'LOOK', label:'Look'}]} />
-                        {/* CORRECTED: Use table.table_placeholder_name for the options */}
                         <Select value={target.target_id} onChange={val => handleTargetChange(filter.id, target.id, 'target_id', val)} options={target.target_type === 'DATA_TABLE' ? dataTables.map(dt => ({value: dt.table_placeholder_name, label: dt.table_placeholder_name})) : lookConfigs.map(lc => ({value: lc.lookId, label: `Look ${lc.lookId}`}))} placeholder={`Select ${target.target_type.replace('_',' ')}...`} />
                         <FieldText label="Target Field/Filter Name" value={target.target_field_name} onChange={e => handleTargetChange(filter.id, target.id, 'target_field_name', e.target.value)} placeholder="e.g., orders.created_date"/>
                         <IconButton icon={<Delete/>} label="Remove Target" onClick={() => handleRemoveTarget(filter.id, target.id)}/>
