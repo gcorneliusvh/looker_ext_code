@@ -1,12 +1,56 @@
 // src/App.js
 import React, { useState } from 'react';
 import { hot } from 'react-hot-loader/root';
-import { ComponentsProvider, Layout, Page, NavList, ListItem } from '@looker/components';
+import styled, { css } from 'styled-components';
+import {
+    ComponentsProvider,
+    Layout,
+    Page,
+    NavList,
+    ListItem,
+    Aside
+} from '@looker/components';
 import { ExtensionProvider } from '@looker/extension-sdk-react';
 import ReportForm from './ReportForm';
-import ViewAllReports from './ViewAllReports'; // CORRECTED: Using the original file name
+import ViewAllReports from './ViewAllReports';
 import EditSystemInstructions from './EditSystemInstructions';
 import HtmlEditorView from './HtmlEditorView';
+
+// --- Custom Styled Components for Navigation ---
+
+const CustomStyledAside = styled(Aside)`
+    background-color: #f7f9fa;
+    border-right: 1px solid #e1e4e8;
+`;
+
+const StyledListItem = styled(ListItem)`
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  padding: 0.5rem 1.25rem;
+
+  margin: 0.25rem 0.75rem;
+  border-radius: 4px;
+  transition: background-color 0.2s ease-in-out, color 0.2s ease-in-out;
+  color: #3c4043;
+  font-weight: 500;
+
+  ${(props) =>
+    !props.selected &&
+    css`
+      &:hover {
+        background-color: #e8eaed;
+      }
+    `}
+
+  ${(props) =>
+    props.selected &&
+    css`
+      background-color: transparent;
+      color: #1976d2;
+      font-weight: 700;
+    `}
+`;
 
 const App = hot(() => {
     const [activeView, setActiveView] = useState('viewAllReports');
@@ -28,7 +72,7 @@ const App = hot(() => {
         setReportForHtmlEdit(reportData);
         setActiveView('htmlEditor');
     };
-    
+
     const renderActiveView = () => {
         switch (activeView) {
             case 'defineReport':
@@ -39,46 +83,48 @@ const App = hot(() => {
                 return <HtmlEditorView report={reportForHtmlEdit} onComplete={() => handleSelectView('viewAllReports')} />;
             case 'viewAllReports':
             default:
-                // CORRECTED: Using the original component name
                 return <ViewAllReports onEditReport={handleEditReport} onHtmlEdit={handleHtmlEdit} />;
         }
     };
 
-    let defineReportLabel = 'Add New Report';
+    // --- UPDATED: Label logic no longer changes for 'htmlEditor' ---
+    let defineReportLabel = 'Add a Report';
     if (activeView === 'defineReport' && reportToEdit) {
         defineReportLabel = 'Edit Definition';
-    } else if (activeView === 'htmlEditor') {
-        defineReportLabel = 'HTML Editor';
     }
+    // The 'else if' condition for htmlEditor has been removed.
 
     return (
         <ExtensionProvider>
             <ComponentsProvider>
                 <Page fixed>
                     <Layout hasAside>
-                        <NavList>
-                            <ListItem
-                                icon="Dashboard"
-                                selected={activeView === 'viewAllReports'}
-                                onClick={() => handleSelectView('viewAllReports')}
-                            >
-                                View & Run Reports
-                            </ListItem>
-                            <ListItem
-                                icon={activeView === 'htmlEditor' ? "Code" : "Add"}
-                                selected={activeView === 'defineReport' || activeView === 'htmlEditor'}
-                                onClick={() => handleSelectView('defineReport')}
-                            >
-                                {defineReportLabel}
-                            </ListItem>
-                            <ListItem
-                                icon="Settings"
-                                selected={activeView === 'editSystemInstructions'}
-                                onClick={() => handleSelectView('editSystemInstructions')}
-                            >
-                                System Instructions
-                            </ListItem>
-                        </NavList>
+                        <CustomStyledAside width="240px">
+                            <NavList>
+                                {/* --- UPDATED: This item now stays selected during HTML editing --- */}
+                                <StyledListItem
+                                    selected={activeView === 'viewAllReports' || activeView === 'htmlEditor'}
+                                    onClick={() => handleSelectView('viewAllReports')}
+                                >
+                                    View/Edit All Reports
+                                </StyledListItem>
+
+                                {/* --- UPDATED: This item is no longer selected during HTML editing --- */}
+                                <StyledListItem
+                                    selected={activeView === 'defineReport'}
+                                    onClick={() => handleSelectView('defineReport')}
+                                >
+                                    {defineReportLabel}
+                                </StyledListItem>
+
+                                <StyledListItem
+                                    selected={activeView === 'editSystemInstructions'}
+                                    onClick={() => handleSelectView('editSystemInstructions')}
+                                >
+                                    Edit System Instructions
+                                </StyledListItem>
+                            </NavList>
+                        </CustomStyledAside>
                         {renderActiveView()}
                     </Layout>
                 </Page>

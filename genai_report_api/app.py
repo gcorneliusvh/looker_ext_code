@@ -1165,49 +1165,61 @@ async def save_report_html(
     bq_client: bigquery.Client = Depends(get_bigquery_client_dep),
     gcs_client: storage.Client = Depends(get_storage_client_dep)
 ):
-    """Saves edited HTML as a new version of the report template."""
-    print(f"INFO: Request to save edited HTML for report '{report_name}'.")
+    print(f"--- [SAVE_HTML_DEBUG] Received request for '{report_name}' ---")
     
     # 1. Fetch current version number
-    query_def_sql = f"SELECT LatestTemplateVersion FROM `{config.gcp_project_id}.report_printing.report_list` WHERE ReportName = @report_name_param"
-    def_params = [ScalarQueryParameter("report_name_param", "STRING", report_name)]
     try:
+        print("[SAVE_HTML_DEBUG] Step 1: Fetching current version from BigQuery...")
+        query_def_sql = f"SELECT LatestTemplateVersion FROM `{config.gcp_project_id}.report_printing.report_list` WHERE ReportName = @report_name_param"
+        def_params = [ScalarQueryParameter("report_name_param", "STRING", report_name)]
         results = list(bq_client.query(query_def_sql, job_config=bigquery.QueryJobConfig(query_parameters=def_params)).result())
+        
         if not results:
+            print(f"[SAVE_HTML_DEBUG] ERROR: Report name '{report_name}' not found in BigQuery.")
             raise HTTPException(status_code=404, detail=f"Report definition not found for '{report_name}'.")
+        
         latest_version = results[0].get("LatestTemplateVersion") or 0
+        print(f"[SAVE_HTML_DEBUG] Found current version: {latest_version}")
     except Exception as e:
+        print(f"[SAVE_HTML_DEBUG] FATAL ERROR during BigQuery version fetch: {e}")
         raise HTTPException(status_code=500, detail=f"Error fetching current report version: {str(e)}")
 
     # 2. Upload the new HTML content to a new versioned file in GCS
+    new_version_number = latest_version + 1
     report_gcs_path_safe = report_name.replace(" ", "_").replace("/", "_").lower()
     base_gcs_folder = f"report_templates/{report_gcs_path_safe}"
-    new_version_number = latest_version + 1
     destination_blob_name = f"{base_gcs_folder}/template_v{new_version_number}.html"
     destination_gcs_uri = f"gs://{config.GCS_BUCKET_NAME}/{destination_blob_name}"
 
     try:
+        print(f"[SAVE_HTML_DEBUG] Step 2: Uploading new version to GCS at '{destination_blob_name}'...")
         bucket = gcs_client.bucket(config.GCS_BUCKET_NAME)
         blob = bucket.blob(destination_blob_name)
         blob.upload_from_string(payload.html_content, content_type='text/html; charset=utf-8')
-        print(f"INFO: Saved new HTML version to '{destination_blob_name}'.")
+        print(f"[SAVE_HTML_DEBUG] GCS upload successful.")
     except Exception as e:
+        print(f"[SAVE_HTML_DEBUG] FATAL ERROR during GCS upload: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to save new HTML template to GCS: {str(e)}")
 
     # 3. Update BigQuery to point to the new version
-    table_id = f"`{config.gcp_project_id}.report_printing.report_list`"
-    update_sql = f"UPDATE {table_id} SET TemplateURL = @new_url, LatestTemplateVersion = @new_version, LastGeneratedTimestamp = CURRENT_TIMESTAMP() WHERE ReportName = @report_name"
-    update_params = [
-        ScalarQueryParameter("new_url", "STRING", destination_gcs_uri),
-        ScalarQueryParameter("new_version", "INT64", new_version_number),
-        ScalarQueryParameter("report_name", "STRING", report_name),
-    ]
     try:
+        print(f"[SAVE_HTML_DEBUG] Step 3: Updating BigQuery record for new version {new_version_number}...")
+        table_id = f"`{config.gcp_project_id}.report_printing.report_list`"
+        update_sql = f"UPDATE {table_id} SET TemplateURL = @new_url, LatestTemplateVersion = @new_version, LastGeneratedTimestamp = CURRENT_TIMESTAMP() WHERE ReportName = @report_name"
+        update_params = [
+            ScalarQueryParameter("new_url", "STRING", destination_gcs_uri),
+            ScalarQueryParameter("new_version", "INT64", new_version_number),
+            ScalarQueryParameter("report_name", "STRING", report_name),
+        ]
         bq_client.query(update_sql, job_config=bigquery.QueryJobConfig(query_parameters=update_params)).result()
+        print(f"[SAVE_HTML_DEBUG] BigQuery update successful.")
     except Exception as e:
+        print(f"[SAVE_HTML_DEBUG] FATAL ERROR during BigQuery update: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to update BigQuery with new template version: {str(e)}")
 
+    print(f"--- [SAVE_HTML_DEBUG] Successfully saved version {new_version_number} for '{report_name}' ---")
     return {"message": f"Successfully saved edits as new version {new_version_number}."}
+
 
 
 # In app.py, replace the existing finalize_template_with_mappings function

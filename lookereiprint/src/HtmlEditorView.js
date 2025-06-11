@@ -13,7 +13,9 @@ import {
     TextArea,
     Fieldset,
 } from '@looker/components';
+import { Code, ChevronLeft } from '@styled-icons/material';
 
+// --- Constants ---
 const BACKEND_BASE_URL = 'https://looker-ext-code-17837811141.us-central1.run.app';
 const SHELL_REPLACEMENT_STRING = '';
 
@@ -21,13 +23,28 @@ function HtmlEditorView({ report, onComplete }) {
     const [bodyContent, setBodyContent] = useState('');
     const [styleContent, setStyleContent] = useState('');
     const [htmlShell, setHtmlShell] = useState('');
-    
+
+    const [isCssPanelVisible, setIsCssPanelVisible] = useState(false);
+
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
     const [error, setError] = useState('');
     const [tinymceApiKey, setTinymceApiKey] = useState(null);
     const { extensionSDK } = useContext(ExtensionContext);
     const editorRef = useRef(null);
+    
+    useEffect(() => {
+        const styleId = 'tinymce-onboarding-fix';
+        if (document.getElementById(styleId)) return;
+        const style = document.createElement('style');
+        style.id = styleId;
+        style.innerHTML = `.tox-notification { display: none !important; }`;
+        document.head.appendChild(style);
+        return () => {
+            const styleElement = document.getElementById(styleId);
+            if (styleElement) styleElement.remove();
+        };
+    }, []);
 
     useEffect(() => {
         if (report) {
@@ -62,7 +79,7 @@ function HtmlEditorView({ report, onComplete }) {
                         shell = shell.replace(bodyMatch[1], SHELL_REPLACEMENT_STRING);
                     }
                     if (styleMatch) {
-                        shell = shell.replace(styleMatch[1], ''); 
+                        shell = shell.replace(styleMatch[1], '/*STYLES_PLACEHOLDER*/'); 
                     }
                     setHtmlShell(shell);
 
@@ -79,10 +96,18 @@ function HtmlEditorView({ report, onComplete }) {
     const handleSave = async () => {
         if (editorRef.current) {
             setIsSaving(true);
-            const newBodyContent = editorRef.current.getContent();
-            let finalHtml = htmlShell.replace(SHELL_REPLACEMENT_STRING, newBodyContent);
-            const styleRegex = /<style[^>]*>([\s\S]*?)<\/style>/i;
-            finalHtml = finalHtml.replace(styleRegex, `<style>\n${styleContent}\n</style>`);
+            
+            let newBodyContent = editorRef.current.getContent();
+
+            // --- THIS IS THE FIX ---
+            // The regular expression is now defined using the RegExp constructor
+            // to avoid syntax errors with the JSX parser (Babel).
+            const regex = new RegExp('', 'g');
+            const cleanedBodyContent = newBodyContent.replace(regex, '{{$1}}');
+            // --- END OF FIX ---
+
+            let finalHtml = htmlShell.replace(SHELL_REPLACEMENT_STRING, cleanedBodyContent);
+            finalHtml = finalHtml.replace('/*STYLES_PLACEHOLDER*/', `\n${styleContent}\n`);
             
             const saveUrl = `${BACKEND_BASE_URL}/report_definitions/${encodeURIComponent(report.ReportName)}/save_html`;
             try {
@@ -109,10 +134,23 @@ function HtmlEditorView({ report, onComplete }) {
     }
     
     return (
-        <Box p="large" display="flex" flexDirection="column" height="100%" gap="medium">
+        <Box
+            p="large"
+            display="flex"
+            flexDirection="column"
+            width="100%"
+            height="100%"
+            gap="medium"
+        >
             <Space between>
                 <Heading>HTML Editor: {report.ReportName}</Heading>
                 <Space>
+                    <Button
+                        iconBefore={isCssPanelVisible ? <ChevronLeft /> : <Code />}
+                        onClick={() => setIsCssPanelVisible(!isCssPanelVisible)}
+                    >
+                        {isCssPanelVisible ? 'Hide CSS' : 'View CSS'}
+                    </Button>
                     <Button onClick={onComplete} disabled={isSaving}>Cancel</Button>
                     <Button color="key" onClick={handleSave} disabled={isLoading || isSaving}>
                         {isSaving ? <Spinner size={20}/> : "Save as New Version"}
@@ -120,19 +158,31 @@ function HtmlEditorView({ report, onComplete }) {
                 </Space>
             </Space>
             
-            <Flex flex="1" border="1px solid" borderColor="ui3" borderRadius="medium" height="100%">
-                <FlexItem width="30%" p="medium" borderRight="1px solid" borderColor="ui3" display="flex" flexDirection="column">
-                    <Fieldset legend="CSS Styles" C-align-self="stretch" flex="1" display="flex" flexDirection="column">
-                        <TextArea
-                            flex="1"
-                            fontFamily="monospace"
-                            fontSize="xsmall"
-                            value={styleContent}
-                            onChange={(e) => setStyleContent(e.target.value)}
-                            disabled={isLoading || isSaving}
-                        />
-                    </Fieldset>
-                </FlexItem>
+            <Flex flex="1" border="1px solid" borderColor="ui3" borderRadius="medium">
+                
+                {isCssPanelVisible && (
+                    <FlexItem 
+                        width="30%" 
+                        p="medium" 
+                        borderRight="1px solid" 
+                        borderColor="ui3" 
+                        display="flex" 
+                        flexDirection="column"
+                        backgroundColor="ui1"
+                    >
+                        <Fieldset legend="CSS Styles" flex="1" display="flex" flexDirection="column">
+                            <TextArea
+                                flex="1"
+                                fontFamily="monospace"
+                                fontSize="xsmall"
+                                value={styleContent}
+                                onChange={(e) => setStyleContent(e.target.value)}
+                                disabled={isLoading || isSaving}
+                            />
+                        </Fieldset>
+                    </FlexItem>
+                )}
+                
                 <FlexItem flex="1" display="flex" flexDirection="column">
                      {isLoading ? (
                         <Space around p="xxxxlarge"><Spinner /></Space>
@@ -151,9 +201,7 @@ function HtmlEditorView({ report, onComplete }) {
                                 menubar: true,
                                 plugins: 'code lists advlist table link help wordcount fullscreen',
                                 toolbar: 'undo redo | blocks | bold italic | bullist numlist | code | fullscreen',
-                                content_css: 'default',
-                                // THIS LINE IS THE FIX
-                                removed_plugins: 'onboarding',
+                                content_style: styleContent,
                             }}
                         />
                      )}
