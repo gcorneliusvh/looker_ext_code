@@ -10,7 +10,8 @@ import {
     Button,
     Flex,
     FlexItem,
-    TextArea
+    TextArea,
+    Fieldset,
 } from '@looker/components';
 
 const BACKEND_BASE_URL = 'https://looker-ext-code-17837811141.us-central1.run.app';
@@ -119,19 +120,20 @@ function HtmlEditorView({ report, onComplete }) {
                 </Space>
             </Space>
             
-            <Flex flex="1" border="1px solid" borderColor="ui3" height="100%">
-                <FlexItem width="30%" p="small" borderRight="1px solid" borderColor="ui3" display="flex" flexDirection="column" gap="small">
-                    <Heading as="h4" fontSize="small" fontWeight="semiBold">CSS Styles</Heading>
-                    <TextArea
-                        flex="1"
-                        fontFamily="monospace"
-                        fontSize="xsmall"
-                        value={styleContent}
-                        onChange={(e) => setStyleContent(e.target.value)}
-                        disabled={isLoading || isSaving}
-                    />
+            <Flex flex="1" border="1px solid" borderColor="ui3" borderRadius="medium" height="100%">
+                <FlexItem width="30%" p="medium" borderRight="1px solid" borderColor="ui3" display="flex" flexDirection="column">
+                    <Fieldset legend="CSS Styles" C-align-self="stretch" flex="1" display="flex" flexDirection="column">
+                        <TextArea
+                            flex="1"
+                            fontFamily="monospace"
+                            fontSize="xsmall"
+                            value={styleContent}
+                            onChange={(e) => setStyleContent(e.target.value)}
+                            disabled={isLoading || isSaving}
+                        />
+                    </Fieldset>
                 </FlexItem>
-                <FlexItem flex="1">
+                <FlexItem flex="1" display="flex" flexDirection="column">
                      {isLoading ? (
                         <Space around p="xxxxlarge"><Spinner /></Space>
                      ) : error ? (
@@ -149,6 +151,9 @@ function HtmlEditorView({ report, onComplete }) {
                                 menubar: true,
                                 plugins: 'code lists advlist table link help wordcount fullscreen',
                                 toolbar: 'undo redo | blocks | bold italic | bullist numlist | code | fullscreen',
+                                content_css: 'default',
+                                // THIS LINE IS THE FIX
+                                removed_plugins: 'onboarding',
                             }}
                         />
                      )}

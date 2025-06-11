@@ -382,8 +382,31 @@ def generate_and_save_report_assets(
         report_name = payload.report_name
         print(f"BACKGROUND_TASK: Starting generation for report: '{report_name}'")
 
+        # --- FIX START: Fetch current version number to correctly increment it ---
+        current_version = 0
+        try:
+            get_version_sql = f"SELECT LatestTemplateVersion FROM `{config.gcp_project_id}.report_printing.report_list` WHERE ReportName = @report_name"
+            version_params = [ScalarQueryParameter("report_name", "STRING", report_name)]
+            version_results = list(bq_client.query(get_version_sql, job_config=bigquery.QueryJobConfig(query_parameters=version_params)).result())
+            if version_results:
+                # Ensure we handle None from BQ gracefully
+                current_version = version_results[0].get("LatestTemplateVersion") or 0
+        except google_api_exceptions.NotFound:
+            # This is expected if the table doesn't exist yet
+            print(f"INFO: Table '{config.gcp_project_id}.report_printing.report_list' not found. Assuming first version for '{report_name}'.")
+            current_version = 0
+        except Exception as e:
+            # If any other error occurs, we assume it's the first version to avoid blocking creation
+            print(f"WARN: Could not fetch current version for '{report_name}', assuming v0. Error: {e}")
+            current_version = 0
+        
+        new_version = current_version + 1
+        print(f"INFO: Versioning for '{report_name}'. Current: {current_version}, New: {new_version}.")
+        # --- FIX END ---
+
         prompt_for_template = payload.prompt
         all_schemas_for_bq_save = {}
+        
         for table_config in payload.data_tables:
             table_placeholder = table_config.table_placeholder_name
             schema_from_dry_run_list = []
@@ -397,10 +420,12 @@ def generate_and_save_report_assets(
             except Exception as e:
                 print(f"WARN: Dry run failed for table '{table_placeholder}'. Skipping. Error: {e}")
                 continue
+
             schema_for_gemini_prompt_str = ", ".join([f"`{f['name']}` (Type: {f['type']})" for f in schema_from_dry_run_list])
             prompt_for_template += f"\n\n--- Data Table: `{table_placeholder}` ---\n"
             prompt_for_template += f"Use the exact placeholder `{{{{TABLE_ROWS_{table_placeholder}}}}}` for this table's body rows.\n"
             prompt_for_template += f"Schema: {schema_for_gemini_prompt_str}\n"
+
             if table_config.field_display_configs:
                 prompt_for_template += "Field Display & Summary Instructions:\n"
                 for config_item in table_config.field_display_configs:
@@ -409,6 +434,7 @@ def generate_and_save_report_assets(
                     if style_hints: field_info += f" (Styling: {'; '.join(style_hints)})"
                     prompt_for_template += f"{field_info}\n"
             prompt_for_template += "--- End Data Table ---"
+
         if payload.look_configs:
             prompt_for_template += "\n\n--- Chart Image Placeholders ---\nPlease include placeholders for the following charts where you see fit in the layout. Use these exact placeholder names:\n"
             for look_config in payload.look_configs:
@@ -418,17 +444,22 @@ def generate_and_save_report_assets(
         img_response = httpx.get(payload.image_url, timeout=180.0)
         img_response.raise_for_status()
         image_bytes_data, image_mime_type_data = img_response.content, img_response.headers.get("Content-Type", "application/octet-stream").lower()
+
         html_template_content = generate_html_from_user_pattern(prompt_text=prompt_for_template, image_bytes=image_bytes_data, image_mime_type=image_mime_type_data, system_instruction_text=config.default_system_instruction_text)
         if not html_template_content or not html_template_content.strip():
             html_template_content = "<html><body><p>Error: AI failed to generate valid HTML.</p></body></html>"
 
         report_gcs_path_safe = report_name.replace(" ", "_").replace("/", "_").lower()
         base_gcs_folder = f"report_templates/{report_gcs_path_safe}"
-        versioned_template_gcs_path_str = f"{base_gcs_folder}/template_v1.html"
+        
+        # --- FIX: Use the new, incremented version for the GCS path ---
+        versioned_template_gcs_path_str = f"{base_gcs_folder}/template_v{new_version}.html"
+        
         bucket = gcs_client.bucket(config.GCS_BUCKET_NAME)
         bucket.blob(versioned_template_gcs_path_str).upload_from_string(html_template_content, content_type='text/html; charset=utf-8')
         
         user_attribute_mappings_json_str = json.dumps(payload.user_attribute_mappings or {})
+        
         data_tables_json_to_save = json.dumps([dt.model_dump() for dt in payload.data_tables], indent=2)
         schema_json_to_save = json.dumps(all_schemas_for_bq_save, indent=2)
         look_configs_json_to_save = json.dumps([lc.model_dump() for lc in payload.look_configs], indent=2) if payload.look_configs else "[]"
@@ -438,15 +469,28 @@ def generate_and_save_report_assets(
 
         table_id = f"`{config.gcp_project_id}.report_printing.report_list`"
         
-        # This MERGE statement is reverted to its original form, without HeaderText/FooterText
+        # --- FIX: Modified MERGE statement to use the @new_version parameter ---
         merge_sql = f"""
         MERGE {table_id} T
         USING (SELECT @report_name AS ReportName) S ON T.ReportName = S.ReportName
         WHEN NOT MATCHED THEN
           INSERT (ReportName, Prompt, SQL, ScreenshotURL, LookConfigsJSON, FilterConfigsJSON, TemplateURL, LatestTemplateVersion, BaseQuerySchemaJSON, FieldDisplayConfigsJSON, CalculationRowConfigsJSON, SubtotalConfigsJSON, UserAttributeMappingsJSON, CreatedTimestamp, LastGeneratedTimestamp)
-          VALUES(@report_name, @prompt, @data_tables_json, @image_url, @look_configs_json, @filter_configs_json, @template_gcs_path, 1, @schema_json, '[]', @calculation_row_configs_json, @subtotal_configs_json, @user_attribute_mappings_json, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP())
+          VALUES(@report_name, @prompt, @data_tables_json, @image_url, @look_configs_json, @filter_configs_json, @template_gcs_path, @new_version, @schema_json, '[]', @calculation_row_configs_json, @subtotal_configs_json, @user_attribute_mappings_json, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP())
         WHEN MATCHED THEN
-          UPDATE SET Prompt = @prompt, SQL = @data_tables_json, ScreenshotURL = @image_url, LookConfigsJSON = @look_configs_json, FilterConfigsJSON = @filter_configs_json, TemplateURL = @template_gcs_path, LatestTemplateVersion = 1, BaseQuerySchemaJSON = @schema_json, FieldDisplayConfigsJSON = '[]', CalculationRowConfigsJSON = @calculation_row_configs_json, SubtotalConfigsJSON = @subtotal_configs_json, UserAttributeMappingsJSON = @user_attribute_mappings_json, LastGeneratedTimestamp = CURRENT_TIMESTAMP()
+          UPDATE SET 
+            Prompt = @prompt, 
+            SQL = @data_tables_json, 
+            ScreenshotURL = @image_url, 
+            LookConfigsJSON = @look_configs_json, 
+            FilterConfigsJSON = @filter_configs_json, 
+            TemplateURL = @template_gcs_path, 
+            LatestTemplateVersion = @new_version, 
+            BaseQuerySchemaJSON = @schema_json, 
+            FieldDisplayConfigsJSON = '[]', 
+            CalculationRowConfigsJSON = @calculation_row_configs_json, 
+            SubtotalConfigsJSON = @subtotal_configs_json, 
+            UserAttributeMappingsJSON = @user_attribute_mappings_json, 
+            LastGeneratedTimestamp = CURRENT_TIMESTAMP()
         """
         
         merge_params = [
@@ -461,11 +505,12 @@ def generate_and_save_report_assets(
             ScalarQueryParameter("calculation_row_configs_json", "STRING", calculation_row_configs_json_to_save),
             ScalarQueryParameter("subtotal_configs_json", "STRING", subtotal_configs_json_to_save),
             ScalarQueryParameter("user_attribute_mappings_json", "STRING", user_attribute_mappings_json_str),
+            # --- FIX: Added the new_version parameter to the query ---
+            ScalarQueryParameter("new_version", "INT64", new_version),
         ]
-        
         bq_client.query(merge_sql, job_config=bigquery.QueryJobConfig(query_parameters=merge_params)).result()
         
-        print(f"BACKGROUND_TASK: Finished generation for report: '{report_name}'")
+        print(f"BACKGROUND_TASK: Finished generation for report: '{report_name}', saved as version {new_version}")
 
     except Exception as e:
         print(f"FATAL BACKGROUND_TASK ERROR for '{payload.report_name}': {e}")
