@@ -4,6 +4,25 @@
 
 This repository houses the core code for a Looker extension, enabling enhanced reporting capabilities by leveraging a Generative AI (GenAI) API. It consists of a Node.js frontend (the Looker Extension itself) and a Python-based GenAI API backend deployed on Google Cloud Run.
 
+## Screenshots
+
+This section provides a visual overview of the Looker Extension's interface and its generated output.
+
+### Create Report Workflow
+![Screenshot showing the interface for creating a new report within the extension.](screenshots/create_report_screenshot.png)
+
+### View and Edit Interface
+![Screenshot of the extension's interface for viewing and editing existing reports or content.](screenshots/view_edit_screenshot.png)
+
+### Multi-Table Report Example
+![An example of a generated report displaying data across multiple tables.](screenshots/multi_table_example.png)
+
+### Report with Header and Footer
+![A sample report demonstrating the inclusion of custom headers and footers.](screenshots/print_with_header_and_footer.png)
+
+### Single-Table Report Example
+![An example of a generated report displaying data from a single table.](screenshots/single_table_example.png)
+
 ## Table of Contents
 
 * [Project Overview](#project-overview)
