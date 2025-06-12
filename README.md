@@ -144,6 +144,7 @@ application: lookereiprint {
     global_user_attributes: ["client_id"] # Example of a global user attribute
   }
 }
+```**
 
 **Update and Deploy:** After updating the `manifest.lkml` file in its dedicated GitHub repository, ensure you deploy the LookML project to your Looker instance so the changes take effect.
 
@@ -176,7 +177,7 @@ When deploying to Cloud Run, these are passed as environment variables. You can 
   value: "[https://igmprinting.cloud.looker.com:19999](https://igmprinting.cloud.looker.com:19999)"
 - name: TINYMCF_API_KEY
   value: "[ANONYMIZED_TINYMCF_API_KEY]"
-
+```**
   ## Explanation of variables:
 
 * `FRONTEND_NGROK_URL`: Likely used for local development/testing of the frontend, possibly with a tunneling service like ngrok or Cloudflare Tunnel to expose localhost to Looker.
@@ -213,4 +214,4 @@ To set up the project for local development:
 
 ## Contributing
 
-Contributions are welcome! Please follow standard GitHub flow: fork the repository, create a branch, make your changes, and open a pull request.
+Contributions are welcome! Please follow standard GitHub flow: fork the repository, create a branch, make your changes, and open a pull request.    
