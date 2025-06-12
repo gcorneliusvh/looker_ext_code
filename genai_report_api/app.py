@@ -424,7 +424,7 @@ def generate_and_save_report_assets(
 
             schema_for_gemini_prompt_str = ", ".join([f"`{f['name']}` (Type: {f['type']})" for f in schema_from_dry_run_list])
             prompt_for_template += f"\n\n--- Data Table: `{table_placeholder}` ---\n"
-            prompt_for_template += f"Use the exact placeholder `{{{{TABLE_ROWS_{table_placeholder}}}}}` for this table's body rows.\n"
+            prompt_for_template += f"Design a complete `<table>` for this data. Inside this table, create a `<thead>` for the column headers and a `<tbody>`. The placeholder for this table's data rows MUST be `{{{{TABLE_ROWS_{table_placeholder}}}}}` and it MUST be placed inside the `<tbody>` tag. For example: `<tbody>{{{{TABLE_ROWS_{table_placeholder}}}}}</tbody>`.\n"
             prompt_for_template += f"Schema: {schema_for_gemini_prompt_str}\n"
 
             if table_config.field_display_configs:
@@ -1229,6 +1229,7 @@ async def save_report_html(
 
     print(f"--- [SAVE_HTML_DEBUG] Successfully saved version {new_version_number} for '{report_name}' ---")
     return {"message": f"Successfully saved edits as new version {new_version_number}."}
+
 
 @app.post("/report_definitions/{report_name}/refine_template", response_model=RefinementResponse)
 async def refine_report_template_oneshot(
