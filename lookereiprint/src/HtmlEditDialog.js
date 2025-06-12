@@ -10,19 +10,18 @@ import {
     Button,
     Flex,
     FlexItem,
-    TextArea
+    TextArea,
+    Fieldset,
 } from '@looker/components';
+import { Code, ChevronLeft } from '@styled-icons/material';
 
 const BACKEND_BASE_URL = 'https://looker-ext-code-17837811141.us-central1.run.app';
 
-// This is a placeholder for re-combining the HTML parts upon save
-const SHELL_REPLACEMENT_STRING = '';
-
 function HtmlEditorView({ report, onComplete }) {
+    const [originalHtml, setOriginalHtml] = useState(''); 
     const [bodyContent, setBodyContent] = useState('');
     const [styleContent, setStyleContent] = useState('');
-    const [htmlShell, setHtmlShell] = useState(''); // To store the HTML structure minus the body
-    
+    const [isCssPanelVisible, setIsCssPanelVisible] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
     const [error, setError] = useState('');
@@ -31,47 +30,66 @@ function HtmlEditorView({ report, onComplete }) {
     const editorRef = useRef(null);
 
     useEffect(() => {
+        const styleId = 'tinymce-onboarding-fix';
+        if (document.getElementById(styleId)) return;
+        const style = document.createElement('style');
+        style.id = styleId;
+        style.innerHTML = `.tox-notification { display: none !important; }`;
+        document.head.appendChild(style);
+        return () => {
+            const styleElement = document.getElementById(styleId);
+            if (styleElement) styleElement.remove();
+        };
+    }, []);
+
+    useEffect(() => {
         if (report) {
             const fetchConfigAndHtml = async () => {
                 setIsLoading(true);
                 setError('');
                 try {
-                    // Fetch the API Key from backend
                     const configUrl = `${BACKEND_BASE_URL}/api/public_config`;
-                    const configResponse = await extensionSDK.fetchProxy(configUrl, { method: 'GET' });
+                    const configResponse = await extensionSDK.fetchProxy(configUrl);
                     if (!configResponse.ok || !configResponse.body.tinymce_api_key) {
-                        throw new Error('TinyMCE API Key could not be retrieved from the server.');
+                        throw new Error('TinyMCE API Key could not be retrieved.');
                     }
                     setTinymceApiKey(configResponse.body.tinymce_api_key);
 
-                    // Fetch the full HTML content
                     const getUrl = `${BACKEND_BASE_URL}/report_definitions/${encodeURIComponent(report.ReportName)}/get_html`;
-                    const htmlResponse = await extensionSDK.fetchProxy(getUrl, { method: 'GET' });
+                    const htmlResponse = await extensionSDK.fetchProxy(getUrl);
                     if (!htmlResponse.ok) {
                         throw new Error(htmlResponse.body?.detail || `Error fetching HTML`);
                     }
-                    const fullHtml = htmlResponse.body.html_content || '';
+                    
+                    let htmlContent = htmlResponse.body.html_content || '';
 
-                    // Split the HTML into parts
+                    // --- NEW & FINAL FIX START ---
+                    // This regex finds a placeholder, the whitespace after it, and the full table tag that follows.
+                    const pattern = /({{TABLE_ROWS_[a-zA-Z0-9_]+}})(\s*)(<table[\s\S]*?<\/table>)/gi;
+
+                    const fixedHtml = htmlContent.replace(pattern, (match, placeholder, whitespace, tableHtml) => {
+                        // In here, we operate *only* on the captured table HTML string.
+                        // We find the opening tbody tag and insert the placeholder right after it.
+                        const fixedTableHtml = tableHtml.replace(/(<tbody[^>]*>)/i, `$1${placeholder}`);
+                        
+                        // Return the whitespace and the newly modified table.
+                        return `${whitespace}${fixedTableHtml}`;
+                    });
+                    // --- NEW & FINAL FIX END ---
+                    
+                    setOriginalHtml(fixedHtml);
+
                     const styleRegex = /<style[^>]*>([\s\S]*?)<\/style>/i;
                     const bodyRegex = /<body[^>]*>([\s\S]*?)<\/body>/i;
+                    const styleMatch = fixedHtml.match(styleRegex);
+                    const bodyMatch = fixedHtml.match(bodyRegex);
 
-                    const styleMatch = fullHtml.match(styleRegex);
-                    const bodyMatch = fullHtml.match(bodyRegex);
-                    
-                    setStyleContent(styleMatch ? styleMatch[1] : '/* No <style> tag found. */');
-                    setBodyContent(bodyMatch ? bodyMatch[1] : '');
-                    
-                    // Store the shell, replacing the body content with a placeholder
-                    let shell = fullHtml;
-                    if (bodyMatch) {
-                        shell = shell.replace(bodyMatch[1], SHELL_REPLACEMENT_STRING);
+                    if (!bodyMatch) {
+                        throw new Error("Could not parse the HTML body from the template. It might be corrupted.");
                     }
-                    if (styleMatch) {
-                        // Also replace style content to avoid duplicating it on save
-                        shell = shell.replace(styleMatch[1], ''); 
-                    }
-                    setHtmlShell(shell);
+                    
+                    setStyleContent(styleMatch ? styleMatch[1].trim() : '');
+                    setBodyContent(bodyMatch[1].trim());
 
                 } catch (err) {
                     setError(err.message);
@@ -84,17 +102,27 @@ function HtmlEditorView({ report, onComplete }) {
     }, [report, extensionSDK]);
 
     const handleSave = async () => {
-        if (editorRef.current) {
+        if (editorRef.current && originalHtml) {
             setIsSaving(true);
             const newBodyContent = editorRef.current.getContent();
+            const newStyleContent = styleContent; 
 
-            // Recombine the HTML parts
-            // 1. Put the new body content back into the shell
-            let finalHtml = htmlShell.replace(SHELL_REPLACEMENT_STRING, newBodyContent);
-            
-            // 2. Put the new style content back into the <style> tag
-            const styleRegex = /<style[^>]*>([\s\S]*?)<\/style>/i;
-            finalHtml = finalHtml.replace(styleRegex, `<style>\n${styleContent}\n</style>`);
+            let finalHtml = originalHtml;
+
+            const bodyRegex = /(<body[^>]*>)([\s\S]*?)(<\/body>)/i;
+            const styleRegex = /(<style[^>]*>)([\s\S]*?)(<\/style>)/i;
+
+            const bodyMatch = finalHtml.match(bodyRegex);
+            if (bodyMatch) {
+                const newBodyTag = `${bodyMatch[1]}${newBodyContent}${bodyMatch[3]}`;
+                finalHtml = finalHtml.replace(bodyMatch[0], newBodyTag);
+            }
+
+            const styleMatch = finalHtml.match(styleRegex);
+            if (styleMatch) {
+                const newStyleTag = `${styleMatch[1]}\n${newStyleContent}\n${styleMatch[3]}`;
+                finalHtml = finalHtml.replace(styleMatch[0], newStyleTag);
+            }
             
             const saveUrl = `${BACKEND_BASE_URL}/report_definitions/${encodeURIComponent(report.ReportName)}/save_html`;
             try {
@@ -108,7 +136,6 @@ function HtmlEditorView({ report, onComplete }) {
                 alert(response.body.message || 'HTML saved successfully!');
                 onComplete();
             } catch (err) {
-                console.error("Error saving HTML:", err);
                 alert(`Failed to save HTML: ${err.message}`);
             } finally {
                 setIsSaving(false);
@@ -117,14 +144,17 @@ function HtmlEditorView({ report, onComplete }) {
     };
 
     if (!report) {
-        return <Box p="large">No report selected for editing. Please go back to the "View & Run Reports" page.</Box>
+        return <Box p="large">No report selected for editing.</Box>
     }
     
     return (
-        <Box p="large" display="flex" flexDirection="column" height="100%" gap="medium">
+        <Box p="large" display="flex" flexDirection="column" width="100%" height="100%" gap="medium">
             <Space between>
                 <Heading>HTML Editor: {report.ReportName}</Heading>
                 <Space>
+                    <Button iconBefore={isCssPanelVisible ? <ChevronLeft /> : <Code />} onClick={() => setIsCssPanelVisible(!isCssPanelVisible)}>
+                        {isCssPanelVisible ? 'Hide CSS' : 'View CSS'}
+                    </Button>
                     <Button onClick={onComplete} disabled={isSaving}>Cancel</Button>
                     <Button color="key" onClick={handleSave} disabled={isLoading || isSaving}>
                         {isSaving ? <Spinner size={20}/> : "Save as New Version"}
@@ -132,42 +162,38 @@ function HtmlEditorView({ report, onComplete }) {
                 </Space>
             </Space>
             
-            <Flex flex="1" border="1px solid" borderColor="ui3" height="100%">
-                <FlexItem width="30%" p="small" borderRight="1px solid" borderColor="ui3" display="flex" flexDirection="column" gap="small">
-                    <Heading as="h4" fontSize="small" fontWeight="semiBold">CSS Styles</Heading>
-                    <TextArea
-                        flex="1"
-                        fontFamily="monospace"
-                        fontSize="xsmall"
-                        value={styleContent}
-                        onChange={(e) => setStyleContent(e.target.value)}
-                        disabled={isLoading || isSaving}
-                    />
-                </FlexItem>
-                <FlexItem flex="1">
-                     {isLoading ? (
-                        <Space around p="xxxxlarge"><Spinner /></Space>
-                     ) : error ? (
-                        <Box p="large" color="critical">{error}</Box>
-                     ) : !tinymceApiKey ? (
-                        <Box p="large" color="critical">Configuration Error: TinyMCE API Key not found.</Box>
-                     ) : (
-                        <Editor
-                            apiKey={tinymceApiKey}
-                            onInit={(evt, editor) => editorRef.current = editor}
-                            initialValue={bodyContent}
-                            init={{
-                                height: '100%',
-                                resize: false,
-                                menubar: true,
-                                plugins: 'code lists advlist table link help wordcount fullscreen',
-                                toolbar: 'undo redo | blocks | bold italic | bullist numlist | code | fullscreen',
-                                content_css: 'default'
-                            }}
-                        />
-                     )}
-                </FlexItem>
-            </Flex>
+            {isLoading ? (<Space around p="xxxxlarge"><Spinner /></Space>)
+            : error ? (<Box p="large" color="critical" border="1px solid" borderColor="critical" borderRadius="medium">{error}</Box>)
+            : (
+                <Flex flex="1" border="1px solid" borderColor="ui3" borderRadius="medium">
+                    {isCssPanelVisible && (
+                        <FlexItem width="30%" p="medium" borderRight="1px solid" borderColor="ui3" display="flex" flexDirection="column" backgroundColor="ui1">
+                            <Fieldset legend="CSS Styles" flex="1" display="flex" flexDirection="column">
+                                <TextArea flex="1" fontFamily="monospace" fontSize="xsmall" value={styleContent} onChange={(e) => setStyleContent(e.target.value)} disabled={isLoading || isSaving} />
+                            </Fieldset>
+                        </FlexItem>
+                    )}
+                    <FlexItem flex="1" display="flex" flexDirection="column">
+                         {!tinymceApiKey ? (
+                            <Box p="large" color="critical">Configuration Error: TinyMCE API Key not found.</Box>
+                         ) : (
+                            <Editor
+                                apiKey={tinymceApiKey}
+                                onInit={(evt, editor) => editorRef.current = editor}
+                                initialValue={bodyContent}
+                                init={{
+                                    height: '100%',
+                                    resize: false,
+                                    menubar: true,
+                                    plugins: 'code lists advlist table link help wordcount fullscreen',
+                                    toolbar: 'undo redo | blocks | bold italic | bullist numlist | code | fullscreen',
+                                    content_style: styleContent,
+                                }}
+                            />
+                         )}
+                    </FlexItem>
+                </Flex>
+            )}
         </Box>
     );
 }
