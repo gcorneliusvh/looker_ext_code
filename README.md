@@ -144,3 +144,68 @@ application: lookereiprint {
     global_user_attributes: ["client_id"] # Example of a global user attribute
   }
 }
+
+Update and Deploy: After updating the manifest.lkml file in its dedicated GitHub repository, ensure you deploy the LookML project to your Looker instance so the changes take effect.
+
+Configuration (Environment Variables)
+The following environment variables are used for configuring the application, particularly for the Cloud Run deployment of the GenAI API backend and potentially for the frontend build process.
+
+When deploying to Cloud Run, these are passed as environment variables. You can create a env.yaml file for gcloud run deploy --env-vars-file=./env.yaml with the format:
+
+YAML
+
+# env.yaml
+# Place this file in the genai_report_api directory for Cloud Run deployment
+- name: FRONTEND_NGROK_URL
+  value: "https://[ANONYMIZED_FRONTEND_NGROK_URL]"
+- name: GCP_PROJECT_ID
+  value: "genaimarketingdemo"
+- name: GCP_LOCATION
+  value: "us-central1"
+- name: GCS_BUCKET_NAME
+  value: "report_html_templates_genaimarketingdemo"
+- name: LOOKERSDK_CLIENT_ID
+  value: "[ANONYMIZED_LOOKERSDK_CLIENT_ID]"
+- name: LOOKERSDK_CLIENT_SECRET
+  value: "[ANONYMIZED_LOOKERSDK_CLIENT_SECRET]"
+- name: LOOKER_INSTANCE_URL
+  value: "[https://igmprinting.cloud.looker.com](https://igmprinting.cloud.looker.com)"
+- name: LOOKER_EXTENSION_SANDBOX_HOST
+  value: "https://[ANONYMIZED_LOOKER_EXTENSION_SANDBOX_HOST]"
+- name: LOOKERSDK_BASE_URL
+  value: "[https://igmprinting.cloud.looker.com:19999](https://igmprinting.cloud.looker.com:19999)"
+- name: TINYMCF_API_KEY
+  value: "[ANONYMIZED_TINYMCF_API_KEY]"
+Explanation of variables:
+
+FRONTEND_NGROK_URL: Likely used for local development/testing of the frontend, possibly with a tunneling service like ngrok or Cloudflare Tunnel to expose localhost to Looker.
+GCP_PROJECT_ID: Your Google Cloud Platform project ID.
+GCP_LOCATION: The GCP region where your Cloud Run service is deployed.
+GCS_BUCKET_NAME: The name of the Google Cloud Storage bucket used for hosting frontend assets (e.g., bundle.js) and potentially other templates/files.
+LOOKERSDK_CLIENT_ID, LOOKERSDK_CLIENT_SECRET: Credentials for authenticating with the Looker SDK, likely used by the backend API or for internal Looker interactions.
+LOOKER_INSTANCE_URL: The base URL of your Looker instance.
+LOOKER_EXTENSION_SANDBOX_HOST: The host URL for the Looker Extension iframe sandbox, crucial for external_api_urls entitlement.
+LOOKERSDK_BASE_URL: Another Looker SDK base URL, possibly for a specific API version or internal endpoint.
+TINYMCF_API_KEY: API key for TinyMCE, suggesting that the extension includes a rich text editor.
+Getting Started (Development)
+To set up the project for local development:
+
+Clone this repository:
+Bash
+
+git clone [https://github.com/your-username/looker_ext_code.git](https://github.com/your-username/looker_ext_code.git)
+cd looker_ext_code
+Backend (GenAI Report API):
+Navigate to genai_report_api/.
+Install Python dependencies (preferably in a virtual environment).
+Set up environment variables locally (e.g., using a .env file and a library like python-dotenv).
+Run the API locally (consult genai_report_api for specific instructions).
+Frontend (Looker Extension):
+Navigate to lookereiprint/.
+Install Node.js dependencies: npm install.
+Set up environment variables locally if needed by the frontend build (e.g., using a .env file).
+Start the development server (consult lookereiprint for specific instructions, typically npm start).
+Configure the frontend to point to your locally running GenAI API or your deployed Cloud Run service.
+To test locally with your Looker instance, you may need to expose your local frontend development server using a tunneling service (e.g., ngrok or Cloudflare Tunnel) and update your manifest.lkml url temporarily.
+Contributing
+Contributions are welcome! Please follow standard GitHub flow: fork the repository, create a branch, make your changes, and open a pull request.
