@@ -424,7 +424,23 @@ def generate_and_save_report_assets(
 
             schema_for_gemini_prompt_str = ", ".join([f"`{f['name']}` (Type: {f['type']})" for f in schema_from_dry_run_list])
             prompt_for_template += f"\n\n--- Data Table: `{table_placeholder}` ---\n"
-            prompt_for_template += f"Design a complete `<table>` for this data. Inside this table, create a `<thead>` for the column headers and a `<tbody>`. The placeholder for this table's data rows MUST be `{{{{TABLE_ROWS_{table_placeholder}}}}}` and it MUST be placed inside the `<tbody>` tag. For example: `<tbody>{{{{TABLE_ROWS_{table_placeholder}}}}}</tbody>`.\n"
+            prompt_for_template += f"You MUST generate a complete table structure. The placeholder `{{{{TABLE_ROWS_{table_placeholder}}}}}` MUST be inside a `<tbody>` tag. DO NOT place the placeholder anywhere else. Follow this example structure precisely:\n"
+            prompt_for_template += f"""
+<table class="data-table">
+  <thead>
+    <tr>
+      <th>Column 1</th>
+      <th>Column 2</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{{{TABLE_ROWS_{table_placeholder}}}}}
+  </tbody>
+</table>
+"""
+            prompt_for_template += f"\nUse the schema to determine the actual column headers in the `<thead>`.\n"
+            # --- END OF NEW PROMPT ---
+            
             prompt_for_template += f"Schema: {schema_for_gemini_prompt_str}\n"
 
             if table_config.field_display_configs:

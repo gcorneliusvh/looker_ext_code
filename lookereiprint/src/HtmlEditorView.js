@@ -61,25 +61,16 @@ function HtmlEditorView({ report, onComplete }) {
                         throw new Error(htmlResponse.body?.detail || `Error fetching HTML`);
                     }
                     
-                    let htmlContent = htmlResponse.body.html_content || '';
-
-                    // --- NEW FIX: Programmatically move misplaced placeholders into the correct table body ---
-                    const placeholderPattern = /({{TABLE_ROWS_[a-zA-Z0-9_]+}})\s*(<table[\s\S]*?<tbody[^>]*>)([\s\S]*?<\/tbody>[\s\S]*?<\/table>)/gi;
-                    const fixedHtml = htmlContent.replace(placeholderPattern, (match, placeholder, tableStart, tableEnd) => {
-                        // Reassembles the parts with the placeholder correctly moved inside the <tbody> tag.
-                        return `${tableStart}${placeholder}${tableEnd}`;
-                    });
-                    // --- END OF NEW FIX ---
-
-                    setOriginalHtml(fixedHtml);
+                    const fullHtml = htmlResponse.body.html_content || '';
+                    setOriginalHtml(fullHtml); // Store original HTML to use as a stable base for saving
 
                     const styleRegex = /<style[^>]*>([\s\S]*?)<\/style>/i;
                     const bodyRegex = /<body[^>]*>([\s\S]*?)<\/body>/i;
-                    const styleMatch = fixedHtml.match(styleRegex);
-                    const bodyMatch = fixedHtml.match(bodyRegex);
+                    const styleMatch = fullHtml.match(styleRegex);
+                    const bodyMatch = fullHtml.match(bodyRegex);
 
                     if (!bodyMatch) {
-                        throw new Error("Could not parse the HTML body from the template. It might be corrupted. Please use the 'Revert' function on the main page to restore a working version.");
+                        throw new Error("Could not parse the HTML body from the template. It might be corrupted.");
                     }
                     
                     setStyleContent(styleMatch ? styleMatch[1].trim() : '');
