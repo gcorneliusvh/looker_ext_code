@@ -1,5 +1,7 @@
 # `looker_ext_code`
 
+**⚠️ IMPORTANT DISCLAIMER: This project is currently in active development and has not yet undergone proper security validations. Use the code and deploy it at your own risk. It is not intended for production environments without thorough security review and hardening. ⚠️**
+
 This repository houses the core code for a Looker extension, enabling enhanced reporting capabilities by leveraging a Generative AI (GenAI) API. It consists of a Node.js frontend (the Looker Extension itself) and a Python-based GenAI API backend deployed on Google Cloud Run.
 
 ## Table of Contents
